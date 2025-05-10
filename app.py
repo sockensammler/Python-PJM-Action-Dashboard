@@ -15,6 +15,158 @@ datum_heute = heute.strftime("%d.%m.%Y")
 datum_plus10 = pd.Timestamp(arbeitstage_10spaeter).strftime("%d.%m.%Y")
 datum_minus3 = pd.Timestamp(arbeitstage_3frueher).strftime("%d.%m.%Y")
 
+# Zuordnung der Kalkulationsstunden zu den Abteilungen
+CALC_FIELD_TO_DEPT = {
+    "yprjmcad":  "MCAD",
+    "yprjecad":  "ECAD",
+    "yprjauto":  "AUTOMATION",
+    "yprjbild":  "BILDGEBUNG",
+    "yprjas":    "PROJECTMANAGEMENT",
+    "yprjpm":    "PRODUCT DEVELOPMENT",
+    "yprjtd":    "TD",
+    "yprjsoft":  "SOFTWARE",
+}
+
+#create a task for a specific person in ABAS ERP
+def create_project_task_for_person(project_number, person_short, task_name, time_budget, date_start, date_end):
+    
+    
+    # JSON-Payload analog zum C# Beispiel
+    params = {
+        "action": "create",
+        "database_and_group": "149:02",
+        "data": [
+            {"name": "yprojekt", "value": project_number},
+            {"name": "ypersonal", "value": person_short},
+            {"name": "namebspr", "value": task_name},
+            {"name": "ypvsollstd", "value": time_budget},
+            {"name": "ypvplanstd", "value": time_budget},
+            {"name": "ypvforecaststd", "value": time_budget},
+            {"name": "yadatum", "value": date_start},
+            {"name": "yedatum", "value": date_end }
+        ],
+    }
+    try:
+        response = requests.post(base_address, json=params)
+        response.raise_for_status()  # Löst eine Exception bei HTTP-Fehlern aus
+        return response.json()       # Erwartet eine JSON-Antwort vom Server
+    except requests.exceptions.RequestException as e:
+        print(f"Fehler beim Abrufen des Gateway Numbers: {e}")
+        return None
+
+def create_project_task_for_department(project_number, department_short, task_name, time_budget, date_start, date_end):
+    
+    
+    # JSON-Payload analog zum C# Beispiel
+    params = {
+        "action": "create",
+        "database_and_group": "149:02",
+        "data": [
+            {"name": "yprojekt", "value": project_number},
+            {"name": "yprojteam", "value": department_short},
+            {"name": "yleiart", "value": department_short},
+            {"name": "namebspr", "value": task_name},
+            {"name": "ypvsollstd", "value": time_budget},
+            {"name": "ypvplanstd", "value": time_budget},
+            {"name": "ypvforecaststd", "value": time_budget},
+            {"name": "yadatum", "value": date_start},
+            {"name": "yedatum", "value": date_end }
+        ],
+    }
+    try:
+        response = requests.post(base_address, json=params)
+        response.raise_for_status()  # Löst eine Exception bei HTTP-Fehlern aus
+        return response.json()       # Erwartet eine JSON-Antwort vom Server
+    except requests.exceptions.RequestException as e:
+        print(f"Fehler beim Abrufen des Gateway Numbers: {e}")
+        return None
+
+def create_dispatch_milestone(project_number, person_short, date_start, date_end):
+    
+    # JSON-Payload analog zum C# Beispiel
+    params = {
+        "action": "create",
+        "database_and_group": "149:02",
+        "data": [
+            {"name": "yprojekt", "value": project_number},
+            {"name": "ypersonal", "value": person_short},
+            {"name": "yadatum", "value": date_start},
+            {"name": "yedatum", "value": date_end },
+            {"name": "ypvtyp", "value": "Meilenstein" },
+            {"name": "namebspr", "value": "Dispatch"}
+        ],
+    }
+    try:
+        response = requests.post(base_address, json=params)
+        response.raise_for_status()  # Löst eine Exception bei HTTP-Fehlern aus
+        return response.json()       # Erwartet eine JSON-Antwort vom Server
+    except requests.exceptions.RequestException as e:
+        print(f"Fehler beim Abrufen des Gateway Numbers: {e}")
+        return None
+
+def fetch_gateway_data(gateway_id):
+        # JSON-Payload analog zum C# Beispiel
+    params = {
+        "action": "read",
+        "id": gateway_id,
+        "fields": [],
+        "table_fields": ["ytzid","ytname","ytenddate"]
+    }
+    try:
+        response = requests.post(base_address, json=params)
+        response.raise_for_status()  # Löst eine Exception bei HTTP-Fehlern aus
+        return response.json()       # Erwartet eine JSON-Antwort vom Server
+    except requests.exceptions.RequestException as e:
+        print(f"Fehler beim Abrufen des Gateway Numbers: {e}")
+        return None
+
+# gGet the gateway number and ID from the project number
+def get_gatewaynumber_and_id(project_number):
+    params = {
+        "action": "query",
+        "database_and_group": "32:00",
+        "fields": [
+            "nummer", "id","ycalc^nummer",
+        ],
+        "filter":{
+            "type": "atomic_condition",
+            "name": "yproject",
+            "value": project_number,
+            "operator": "EQUALS"
+        }
+    }
+    try:
+        res = requests.post(base_address, json=params, timeout=30)
+        res.raise_for_status()
+        return res.json()
+    except requests.exceptions.RequestException as e:
+        print(f"Fehler beim Abrufen der Daten: {e}")
+        return None
+
+#Extract the calculated hours for this project
+def fetch_calculation_hours(calculation_number):
+    params = {
+        "action": "query",
+        "database_and_group": "41:00",
+        "fields": [
+            "yprjmcad","yprjauto","yprjecad","yprjbild","yprjas","yprjpm","yprjtd","yprjsoft"
+        ],
+        "filter":{
+            "type": "atomic_condition",
+            "name": "nummer",
+            "value": calculation_number,
+            "operator": "EQUALS"
+        }
+    }
+    try:
+        res = requests.post(base_address, json=params, timeout=30)
+        res.raise_for_status()
+        return res.json()
+    except requests.exceptions.RequestException as e:
+        print(f"Fehler beim Abrufen der Daten: {e}")
+        return None
+
+
 def fetch_calculation_hours(calculation_number):
     params = {
         "action": "query",
@@ -164,15 +316,13 @@ def fetch_overbooked_projects(projektleiter_kuerzel):
         st.error(f"Fehler beim Abrufen der überbuchten Projekte: {e}")
         return None
 
+
 def main():
     st.title("PJM OVERVIEW")
     projektleiter = st.text_input("Projektleiter-Kürzel eingeben:", value="MRG")
     if not projektleiter:
         st.warning("Bitte ein Projektleiter-Kürzel eingeben.")
         return
-
-    calc_hours = fetch_calculation_hours("10819")
-    st.subheader(calc_hours)
 
     # Gateways in SOLD Phase
     gw_sold = fetch_gateway_infosystem_sold_phase()
