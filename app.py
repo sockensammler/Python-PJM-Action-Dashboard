@@ -1,7 +1,7 @@
 import requests
 import pandas as pd
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timedelta
 import streamlit as st
 
 base_address = "http://intra-erp:4444/EPLAN_WS_FREE_EDP"
@@ -15,6 +15,8 @@ datum_heute = heute.strftime("%d.%m.%Y")
 datum_plus10 = pd.Timestamp(arbeitstage_10spaeter).strftime("%d.%m.%Y")
 datum_minus3 = pd.Timestamp(arbeitstage_3frueher).strftime("%d.%m.%Y")
 
+from typing import Optional, Dict, Any, Tuple, List  # mypy‑friendly
+
 # Zuordnung der Kalkulationsstunden zu den Abteilungen
 CALC_FIELD_TO_DEPT = {
     "yprjmcad":  "MCAD",
@@ -26,6 +28,44 @@ CALC_FIELD_TO_DEPT = {
     "yprjtd":    "TD",
     "yprjsoft":  "SOFTWARE",
 }
+ALL_DEPTS = list(CALC_FIELD_TO_DEPT.values())
+
+# ---------------------------------------------------------------------------
+# TERMINREGELN – leicht anpassbar
+# ---------------------------------------------------------------------------
+# Jeder Eintrag: (Start‑Anker, Start‑Offset‑Tage, End‑Anker, End‑Offset‑Tage)
+# Anker = "G6", "G7", "G8"  oder "TODAY"
+TASK_DATE_RULES = {
+    "BILDGEBUNG":          ("G6", 0,    "G6",  7),
+    "MCAD":                ("G7", -14,  "G7", -7),
+    "ECAD":                ("G7", -14,  "G7", -7),
+    "PROJECTMANAGEMENT":   ("TODAY", 0, "G8",  0),
+    "PRODUCT DEVELOPMENT": ("G6", 0,    "G7",  0),  # Ende Engineering = G7
+    "SOFTWARE":            ("G7", 0,    "G7", 14),
+    "TD":                  ("G8", -10,  "G8", -3),
+    "AUTOMATION":          ("G7", 0,  "G7", 14)
+}
+
+# ---------------------------------------------------------------------------
+# HILFSFUNKTION – Default‑Start/Ende nach Regelwerk berechnen
+# ---------------------------------------------------------------------------
+
+def _default_dates(dept: str, gw_dates: Dict[str, str]):
+    rule = TASK_DATE_RULES.get(dept)
+    if not rule:
+        return heute.date(), heute.date()
+
+    start_anchor, start_off, end_anchor, end_off = rule
+
+    def _anchor_date(key):
+        if key == "TODAY":
+            return heute.date()
+        d_str = gw_dates.get(key)
+        return pd.to_datetime(d_str, dayfirst=True).date() if d_str else heute.date()
+
+    s_date = _anchor_date(start_anchor) + timedelta(days=start_off)
+    e_date = _anchor_date(end_anchor) + timedelta(days=end_off)
+    return s_date, e_date
 
 #create a task for a specific person in ABAS ERP
 def create_project_task_for_person(project_number, person_short, task_name, time_budget, date_start, date_end):
@@ -118,29 +158,6 @@ def fetch_gateway_data(gateway_id):
         return response.json()       # Erwartet eine JSON-Antwort vom Server
     except requests.exceptions.RequestException as e:
         print(f"Fehler beim Abrufen des Gateway Numbers: {e}")
-        return None
-
-# gGet the gateway number and ID from the project number
-def get_gatewaynumber_and_id(project_number):
-    params = {
-        "action": "query",
-        "database_and_group": "32:00",
-        "fields": [
-            "nummer", "id","ycalc^nummer",
-        ],
-        "filter":{
-            "type": "atomic_condition",
-            "name": "yproject",
-            "value": project_number,
-            "operator": "EQUALS"
-        }
-    }
-    try:
-        res = requests.post(base_address, json=params, timeout=30)
-        res.raise_for_status()
-        return res.json()
-    except requests.exceptions.RequestException as e:
-        print(f"Fehler beim Abrufen der Daten: {e}")
         return None
 
 #Extract the calculated hours for this project
@@ -315,9 +332,57 @@ def fetch_overbooked_projects(projektleiter_kuerzel):
     except requests.exceptions.RequestException as e:
         st.error(f"Fehler beim Abrufen der überbuchten Projekte: {e}")
         return None
+def get_gateway_id_and_calculation_number(project_number: str) -> Optional[Dict[str, Any]]:
+    """Query GW‑header in ABAS → liefert Nummer, ID & Kalkulations‑Nr."""
+    params = {
+        "action": "query",
+        "database_and_group": "32:00",
+        "fields": ["nummer", "id", "ycalc^nummer"],
+        "filter": {
+            "type": "atomic_condition",
+            "name": "yproject",
+            "value": project_number,
+            "operator": "EQUALS",
+        },
+    }
+    try:
+        r = requests.post(base_address, json=params, timeout=30)
+        r.raise_for_status()
+        # response looks like this: {'success': True, 'result_data': [{'ycalc^nummer': '1530', 'id': '(1565,32,0)', 'nummer': '1013'}], 'message': ''}
+        # lets extract the reslt_data
+        r_json = r.json()
+        row = r_json["result_data"][0] 
+        return row.get("ycalc^nummer", ""), row.get("id", ""), row.get("nummer", "")  
+    
+    except requests.exceptions.RequestException as e:
+        st.error(f"Fehler beim Abrufen der Gateway‑Kopf­daten: {e}")
+        return None
 
 
-def main():
+def get_phase_end_dates(response: dict) -> dict:
+    """
+    Extract the ytenddate for phases G6, G7 and G8.
+
+    Parameters
+    ----------
+    response : dict
+        The full JSON-like payload you showed in your example.
+
+    Returns
+    -------
+    dict
+        A mapping {phase_id: ytenddate}.  If a phase is missing or its
+        date string is empty, the value will be an empty string.
+    """
+    target_phases = {"G6", "G7", "G8"}
+
+    return {
+        item["ytzid"]: item["ytenddate"]
+        for item in response["result_data"]["table"]
+        if item["ytzid"] in target_phases          # only G6 / G7 / G8
+    }
+
+def page_overview(projektleiter):
     st.title("PJM OVERVIEW")
     projektleiter = st.text_input("Projektleiter-Kürzel eingeben:", value="MRG")
     if not projektleiter:
@@ -466,6 +531,54 @@ def main():
     else:
         st.info("Stundendaten konnten nicht geladen werden.")
 
+
+def page_task_creator():
+    st.title("📋 Task Creator")
+    project = st.text_input("Projekt‑Nr.")
+    if project:
+        # Get the gateway number, gateway ID and calculation number from the project number 
+        calculation_number, gateway_id, gateway_number = get_gateway_id_and_calculation_number(project)
+        gateway_data = fetch_gateway_data(gateway_id)
+        end_dates = get_phase_end_dates(gateway_data)
+
+        # Daten nebeneinander anzeigen
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.write("**Kick‑Off:**")
+            st.write(end_dates["G6"])
+        with col2:
+            st.write("**Design:**")
+            st.write(end_dates["G7"])
+        with col3:
+            st.write("**Produktion:**")
+            st.write(end_dates["G8"])   
+    else:
+            st.warning("Keine Daten für die Phasen gefunden.")
+
+# ---------------------------------------------------------------------------
+# MAIN – navigation wrapper
+# ---------------------------------------------------------------------------
+
+def main():
+    st.sidebar.title("Navigation")
+    page_choice = st.sidebar.radio(
+        "Seite auswählen:", ("PJM Overview", "Task Creator"), key="page_select"
+    )
+
+    # Projektleiter Kürzel (needs to be available on every page)
+    if "projektleiter" not in st.session_state:
+        st.session_state["projektleiter"] = "MRG"
+    st.sidebar.text_input(
+        "Projektleiter‑Kürzel:",
+        key="projektleiter",
+        value=st.session_state["projektleiter"],
+    )
+
+    # Route to the selected page
+    if page_choice == "PJM Overview":
+        page_overview(st.session_state["projektleiter"])
+    else:
+        page_task_creator()
 
 
 if __name__ == "__main__":
