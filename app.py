@@ -1,8 +1,9 @@
 import requests
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import streamlit as st
+from typing import Dict, Tuple
 
 base_address = "http://intra-erp:4444/EPLAN_WS_FREE_EDP"
 # Aktuelles Datum und in 10 Arbeitstagen & 3 Tage zurück
@@ -30,6 +31,18 @@ CALC_FIELD_TO_DEPT = {
 }
 ALL_DEPTS = list(CALC_FIELD_TO_DEPT.values())
 
+
+#Aufgabennamen
+TASK_DATE_RULES = {
+    "BILDGEBUNG": "Imaging Design",
+    "MCAD": "Konstruktionsphase (inklusive Kundenlayout)",
+    "ECAD": "ECAD KOnstruktionsphase",
+    "PROJECTMANAGEMENT": "Project Planning",
+    "PRODUCT DEVELOPMENT": "Special Development",  
+    "SOFTWARE": "Software Installation",
+    "TD": "Manual",
+    "AUTOMATION": "Automation",
+}
 # ---------------------------------------------------------------------------
 # TERMINREGELN – leicht anpassbar
 # ---------------------------------------------------------------------------
@@ -159,30 +172,6 @@ def fetch_gateway_data(gateway_id):
     except requests.exceptions.RequestException as e:
         print(f"Fehler beim Abrufen des Gateway Numbers: {e}")
         return None
-
-#Extract the calculated hours for this project
-def fetch_calculation_hours(calculation_number):
-    params = {
-        "action": "query",
-        "database_and_group": "41:00",
-        "fields": [
-            "yprjmcad","yprjauto","yprjecad","yprjbild","yprjas","yprjpm","yprjtd","yprjsoft"
-        ],
-        "filter":{
-            "type": "atomic_condition",
-            "name": "nummer",
-            "value": calculation_number,
-            "operator": "EQUALS"
-        }
-    }
-    try:
-        res = requests.post(base_address, json=params, timeout=30)
-        res.raise_for_status()
-        return res.json()
-    except requests.exceptions.RequestException as e:
-        print(f"Fehler beim Abrufen der Daten: {e}")
-        return None
-
 
 def fetch_calculation_hours(calculation_number):
     params = {
@@ -359,28 +348,43 @@ def get_gateway_id_and_calculation_number(project_number: str) -> Optional[Dict[
         return None
 
 
-def get_phase_end_dates(response: dict) -> dict:
+def get_phase_end_dates(response: dict) -> Tuple[Dict[str, str], Dict[str, date]]:
     """
-    Extract the ytenddate for phases G6, G7 and G8.
+    Extrahiert die Enddaten der Phasen G6, G7 und G8 aus dem API-Payload
+    und liefert sie (a) als String-Dictionary und (b) bereits geparst
+    als date-Objekte zurück.
 
     Parameters
     ----------
     response : dict
-        The full JSON-like payload you showed in your example.
+        Voller JSON-Response, der u. a. response["result_data"]["table"] enthält.
 
     Returns
     -------
-    dict
-        A mapping {phase_id: ytenddate}.  If a phase is missing or its
-        date string is empty, the value will be an empty string.
+    Tuple[dict[str, str], dict[str, date]]
+        (1) {phase_id: "dd.mm.yyyy"}  – unverändert als String  
+        (2) {phase_id: date(yyyy, mm, dd)} – geparst für weitere Berechnungen
     """
     target_phases = {"G6", "G7", "G8"}
 
-    return {
-        item["ytzid"]: item["ytenddate"]
-        for item in response["result_data"]["table"]
-        if item["ytzid"] in target_phases          # only G6 / G7 / G8
+    # (1) Rohdaten als String sammeln
+    end_dates = {
+        item.get("ytzid"): item.get("ytenddate", "")
+        for item in response.get("result_data", {}).get("table", [])
+        if item.get("ytzid") in target_phases
     }
+
+    # (2) In echte date-Objekte umwandeln, leere Strings überspringen
+    milestones = {
+        k: datetime.strptime(v, "%d.%m.%Y").date()
+        for k, v in end_dates.items()
+        if v
+    }
+
+    return end_dates, milestones
+
+
+
 
 def page_overview(projektleiter):
     st.title("PJM OVERVIEW")
@@ -531,6 +535,41 @@ def page_overview(projektleiter):
     else:
         st.info("Stundendaten konnten nicht geladen werden.")
 
+def extract_department_hours(api_response: dict) -> dict[str, int]:
+    """
+    Convert the API's 'result_data' section to {department: hours}.
+
+    Parameters
+    ----------
+    api_response : dict
+        The full JSON object returned by the API call.
+
+    Returns
+    -------
+    dict[str, int]
+        Aggregated hours keyed by the human-readable department names.
+    """
+    dept_hours: dict[str, int] = {}
+    for row in api_response.get("result_data", []):
+        # row is a dict with raw calc fields and numeric hour totals
+        for raw_field, hours in row.items():
+            if raw_field in CALC_FIELD_TO_DEPT and isinstance(hours, (int, float)):
+                dept = CALC_FIELD_TO_DEPT[raw_field]
+                # accumulate in case the same dept appears in multiple rows
+                dept_hours[dept] = dept_hours.get(dept, 0) + hours
+    return dept_hours
+
+
+
+
+def _resolve_anchor(anchor: str) -> date:
+    return date.today() if anchor == "TODAY" else MILESTONES[anchor]
+
+def default_interval(dept: str) -> tuple[date, date]:
+    a_s, off_s, a_e, off_e = DATE_RULES[dept]
+    start = _resolve_anchor(a_s) + timedelta(days=off_s)
+    end   = _resolve_anchor(a_e) + timedelta(days=off_e)
+    return start, end
 
 def page_task_creator():
     st.title("📋 Task Creator")
@@ -539,9 +578,11 @@ def page_task_creator():
         # Get the gateway number, gateway ID and calculation number from the project number 
         calculation_number, gateway_id, gateway_number = get_gateway_id_and_calculation_number(project)
         gateway_data = fetch_gateway_data(gateway_id)
-        end_dates = get_phase_end_dates(gateway_data)
+        end_dates, MILESTONES = get_phase_end_dates(gateway_data)
 
-        # Daten nebeneinander anzeigen
+        
+
+        #Gateway Termine nebeneinander anzeigen
         col1, col2, col3 = st.columns(3)
         with col1:
             st.write("**Kick‑Off:**")
@@ -552,8 +593,31 @@ def page_task_creator():
         with col3:
             st.write("**Produktion:**")
             st.write(end_dates["G8"])   
+
+
+        # Get the calculation hours for this project
+        calc_hours = fetch_calculation_hours(calculation_number)
+        departement_hours = extract_department_hours(calc_hours)
+        st.write("**Kalkulationsstunden:**")
+        # Create a DataFrame from the dictionary        
+        df_hours = pd.DataFrame.from_dict(departement_hours, orient='index', columns=['Stunden'])
+        # Reset the index to get the department names as a column   
+        df_hours.reset_index(inplace=True)
+        # Rename the columns
+        df_hours.columns = ['Abteilung', 'Stunden']
+        # Sort the DataFrame by the 'Abteilung' column
+        df_hours.sort_values(by='Abteilung', inplace=True)
+        # Display the DataFrame
+        st.dataframe(df_hours, use_container_width=True, hide_index=True)
+        st.write(df_hours)       
+        # Button to create project plan
+        #if st.button("Projektplan erstellen"):
+            # Create a task for each department
+
     else:
-            st.warning("Keine Daten für die Phasen gefunden.")
+        st.warning("Keine Daten  gefunden.")
+
+        
 
 # ---------------------------------------------------------------------------
 # MAIN – navigation wrapper
