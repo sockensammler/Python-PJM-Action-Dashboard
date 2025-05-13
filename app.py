@@ -341,16 +341,27 @@ def get_gateway_id_and_calculation_number(project_number: str) -> Optional[Dict[
     try:
         r = requests.post(base_address, json=params, timeout=30)
         r.raise_for_status()
-        # response looks like this: {'success': True, 'result_data': [{'ycalc^nummer': '1530', 'id': '(1565,32,0)', 'nummer': '1013'}], 'message': ''}
-        # lets extract the reslt_data
         r_json = r.json()
-        row = r_json["result_data"][0] 
-        return row.get("ycalc^nummer", ""), row.get("id", ""), row.get("nummer", "")  
-    
-    except requests.exceptions.RequestException as e:
-        st.error(f"Fehler beim Abrufen der Gateway‑Kopf­daten: {e}")
-        return None
 
+        if not r_json.get("success"):
+            st.error(f"ABAS meldet Fehler: {r_json.get('message', 'kein Text')}")
+            return None
+
+        rows = r_json.get("result_data", [])
+        if not rows:
+            st.warning(f"Projekt {project_number} wurde nicht gefunden.")
+            return None
+
+        row = rows[0]
+        return (
+            row.get("ycalc^nummer", ""),
+            row.get("id", ""),
+            row.get("nummer", ""),
+        )
+
+    except requests.exceptions.RequestException as e:
+        st.error(f"HTTP-Fehler beim Abruf der Gateway-Kopfdaten: {e}")
+        return None
 
 def get_phase_end_dates(response: dict) -> Tuple[Dict[str, str], Dict[str, date]]:
     """
