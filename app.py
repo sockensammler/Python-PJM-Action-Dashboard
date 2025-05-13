@@ -16,6 +16,8 @@ datum_heute = heute.strftime("%d.%m.%Y")
 datum_plus10 = pd.Timestamp(arbeitstage_10spaeter).strftime("%d.%m.%Y")
 datum_minus3 = pd.Timestamp(arbeitstage_3frueher).strftime("%d.%m.%Y")
 
+
+
 from typing import Optional, Dict, Any, Tuple, List  # mypy‑friendly
 
 # Zuordnung der Kalkulationsstunden zu den Abteilungen
@@ -33,7 +35,7 @@ ALL_DEPTS = list(CALC_FIELD_TO_DEPT.values())
 
 
 #Aufgabennamen
-TASK_DATE_RULES = {
+TASK_NAMES = {
     "BILDGEBUNG": "Imaging Design",
     "MCAD": "Konstruktionsphase (inklusive Kundenlayout)",
     "ECAD": "ECAD KOnstruktionsphase",
@@ -48,7 +50,7 @@ TASK_DATE_RULES = {
 # ---------------------------------------------------------------------------
 # Jeder Eintrag: (Start‑Anker, Start‑Offset‑Tage, End‑Anker, End‑Offset‑Tage)
 # Anker = "G6", "G7", "G8"  oder "TODAY"
-TASK_DATE_RULES = {
+DATE_RULES = {
     "BILDGEBUNG":          ("G6", 0,    "G6",  7),
     "MCAD":                ("G7", -14,  "G7", -7),
     "ECAD":                ("G7", -14,  "G7", -7),
@@ -562,13 +564,17 @@ def extract_department_hours(api_response: dict) -> dict[str, int]:
 
 
 
-def _resolve_anchor(anchor: str) -> date:
-    return date.today() if anchor == "TODAY" else MILESTONES[anchor]
+def _resolve_anchor(anchor: str, milestones: dict[str, date]) -> date:
+    """Gibt das Basisdatum für einen Ankerstring zurück."""
+    if anchor == "TODAY":
+        return date.today()
+    return milestones[anchor]
 
-def default_interval(dept: str) -> tuple[date, date]:
+def default_interval(dept: str, milestones: dict[str, date]) -> tuple[date, date]:
+    """Berechnet Start- und Enddatum gemäss DATE_RULES."""
     a_s, off_s, a_e, off_e = DATE_RULES[dept]
-    start = _resolve_anchor(a_s) + timedelta(days=off_s)
-    end   = _resolve_anchor(a_e) + timedelta(days=off_e)
+    start = _resolve_anchor(a_s, milestones) + timedelta(days=off_s)
+    end   = _resolve_anchor(a_e, milestones) + timedelta(days=off_e)
     return start, end
 
 def page_task_creator():
@@ -578,6 +584,7 @@ def page_task_creator():
         # Get the gateway number, gateway ID and calculation number from the project number 
         calculation_number, gateway_id, gateway_number = get_gateway_id_and_calculation_number(project)
         gateway_data = fetch_gateway_data(gateway_id)
+        global MILESTONES
         end_dates, MILESTONES = get_phase_end_dates(gateway_data)
 
         
@@ -609,10 +616,48 @@ def page_task_creator():
         df_hours.sort_values(by='Abteilung', inplace=True)
         # Display the DataFrame
         st.dataframe(df_hours, use_container_width=True, hide_index=True)
-        st.write(df_hours)       
+        print(df_hours)
         # Button to create project plan
-        #if st.button("Projektplan erstellen"):
-            # Create a task for each department
+        if st.button("Projektplan erstellen"):
+            df_active = df_hours[df_hours["Stunden"] > 0].copy()
+
+            # 3) Leerspalten für Start, Ende, Aufgabe (anlegen für Data-Editor)
+            df_active["Start"]   = pd.NaT
+            df_active["Ende"]    = pd.NaT
+            df_active["Aufgabe"] = ""
+
+            for _, row in df_active.iterrows():
+                dept = row["Abteilung"]
+                start_def, end_def = default_interval(dept, MILESTONES)
+
+                # Vier Spalten nebeneinander
+                c1, c2, c3, c4 = st.columns([2, 2, 2, 4], gap="small")
+
+                with c1:
+                    st.markdown(f"**{dept}**")
+
+                with c2:
+                    row_start = st.date_input(
+                        label="Start",
+                        key=f"{dept}_start",
+                        value=start_def,
+                        format="YYYY-MM-DD",
+                    )
+
+                with c3:
+                    row_end = st.date_input(
+                        label="Ende",
+                        key=f"{dept}_end",
+                        value=end_def,
+                        format="YYYY-MM-DD",
+                    )
+
+                with c4:
+                    st.text_input(
+                        label="Aufgabe",
+                        key=f"{dept}_task",
+                        value=TASK_NAMES.get(dept, ""),
+                    )
 
     else:
         st.warning("Keine Daten  gefunden.")
