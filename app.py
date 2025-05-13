@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, date
 import streamlit as st
 from typing import Dict, Tuple
 import streamlit.column_config as cc 
+import matplotlib.pyplot as plt
 
 base_address = "http://intra-erp:4444/EPLAN_WS_FREE_EDP"
 # Aktuelles Datum und in 10 Arbeitstagen & 3 Tage zurück
@@ -563,8 +564,6 @@ def extract_department_hours(api_response: dict) -> dict[str, int]:
     return dept_hours
 
 
-
-
 def _resolve_anchor(anchor: str, milestones: dict[str, date]) -> date:
     """Gibt das Basisdatum für einen Ankerstring zurück."""
     if anchor == "TODAY":
@@ -577,6 +576,46 @@ def default_interval(dept: str, milestones: dict[str, date]) -> tuple[date, date
     start = _resolve_anchor(a_s, milestones) + timedelta(days=off_s)
     end   = _resolve_anchor(a_e, milestones) + timedelta(days=off_e)
     return start, end
+
+def plot_gantt(df_active: pd.DataFrame, milestones: dict[str, date]):
+    """
+    Erstellt ein Gantt-Diagramm mit
+      • einer Task-Zeile pro Abteilung
+      • Kalenderwochen-Gitternetz
+      • Meilenstein-Linien G6–G8
+    Gibt eine matplotlib-Figure zurück.
+    """
+    df = df_active.copy()
+    df["Start"] = pd.to_datetime(df["Start"])
+    df["Ende"]  = pd.to_datetime(df["Ende"])
+    df = df.sort_values("Start")
+
+    # Achsen-Setup
+    fig, ax = plt.subplots(figsize=(10, 0.6 * len(df) + 2))
+    y_pos = range(len(df))
+
+    # Tasks als horizontale Balken
+    for i, (_, r) in enumerate(df.iterrows()):
+        ax.barh(i, (r["Ende"] - r["Start"]).days, left=r["Start"])
+        ax.text(r["Start"], i, f' {r["Abteilung"]}', va="center")
+
+    # Meilensteine (gestrichelte Linien)
+    for label, when in milestones.items():
+        ax.axvline(when, linestyle="--")
+        ax.text(when, len(df) + 0.2, label, rotation=90, va="bottom")
+
+    # Kalenderwochen-Gitternetz & Beschriftung
+    start, end = df["Start"].min().normalize(), df["Ende"].max().normalize()
+    for w in pd.date_range(start, end, freq="W-MON"):
+        ax.axvline(w, alpha=0.2, linewidth=0.5)
+        ax.text(w, -1, f'KW{w.isocalendar().week}', rotation=90,
+                va="top", fontsize=8)
+
+    ax.set_yticks([])
+    ax.set_ylim(-1, len(df) + 1)
+    ax.set_xlabel("Datum")
+    fig.tight_layout()
+    return fig
 
 def page_task_creator():
     st.title("📋 Task Creator")
@@ -620,36 +659,44 @@ def page_task_creator():
         print(df_hours)
         # Button to create project plan
 
-        if st.button("Projektplan erstellen"):
-            # nur Abteilungen mit gebuchten Stunden
-            # Abteilungen >0 h
-            df_active = df_hours[df_hours["Stunden"] > 0].copy()
 
-            # Start/Ende spaltenweise einsetzen
-            df_active[["Start", "Ende"]] = (
-                df_active["Abteilung"]
-                .apply(lambda d: pd.Series(default_interval(d, MILESTONES)))
-            )
+        # nur Abteilungen mit gebuchten Stunden
+        # Abteilungen >0 h
+        df_active = df_hours[df_hours["Stunden"] > 0].copy()
 
-            # Aufgabentexte
-            df_active["Aufgabe"] = df_active["Abteilung"].map(TASK_NAMES)
+        # Start/Ende spaltenweise einsetzen
+        df_active[["Start", "Ende"]] = (
+            df_active["Abteilung"]
+            .apply(lambda d: pd.Series(default_interval(d, MILESTONES)))
+        )
 
-            # Datumstyp für Streamlit
-            df_active[["Start", "Ende"]] = df_active[["Start", "Ende"]].apply(pd.to_datetime)
+        # Aufgabentexte
+        df_active["Aufgabe"] = df_active["Abteilung"].map(TASK_NAMES)
 
-            # Editor
-            cfg = {
-                "Start": cc.DatetimeColumn("Start", format="DD.MM.YYYY"),
-                "Ende":  cc.DatetimeColumn("Ende",  format="DD.MM.YYYY"),
-            }
-            edited = st.data_editor(
-                df_active[["Abteilung", "Start", "Ende", "Aufgabe", "Stunden"]],
-                column_config=cfg,
-                hide_index=True,
-                use_container_width=True,
-                key="task_editor",
-            )
+        # Datumstyp für Streamlit
+        df_active[["Start", "Ende"]] = df_active[["Start", "Ende"]].apply(pd.to_datetime)
 
+
+        # Editor
+        cfg = {"Start": cc.DatetimeColumn("Start",format="DD.MM.YYYY"), "Ende": cc.DatetimeColumn("Ende",format="DD.MM.YYYY")}
+        edited = st.data_editor(
+            df_active,
+            column_config=cfg,
+            hide_index=True,
+            use_container_width=True,
+            key="task_editor",
+        )
+
+
+        # Gantt zeichnen
+        # Meilensteine (bereits als date-Objekte geparst)
+        milestones = {"G6": MILESTONES["G6"], "G7": MILESTONES["G7"], "G8": MILESTONES["G8"]}
+        fig = plot_gantt(edited, MILESTONES)
+        st.pyplot(fig, use_container_width=True)
+
+
+            
+            
     else:
         st.warning("Keine Daten  gefunden.")
 
