@@ -4,6 +4,7 @@ import numpy as np
 from datetime import datetime, timedelta, date
 import streamlit as st
 from typing import Dict, Tuple
+import streamlit.column_config as cc 
 
 base_address = "http://intra-erp:4444/EPLAN_WS_FREE_EDP"
 # Aktuelles Datum und in 10 Arbeitstagen & 3 Tage zurück
@@ -54,9 +55,9 @@ DATE_RULES = {
     "BILDGEBUNG":          ("G6", 0,    "G6",  7),
     "MCAD":                ("G7", -14,  "G7", -7),
     "ECAD":                ("G7", -14,  "G7", -7),
-    "PROJECTMANAGEMENT":   ("TODAY", 0, "G8",  0),
+    "PROJECTMANAGEMENT":   ("TODAY", -5, "G8",  0),
     "PRODUCT DEVELOPMENT": ("G6", 0,    "G7",  0),  # Ende Engineering = G7
-    "SOFTWARE":            ("G7", 0,    "G7", 14),
+    "SOFTWARE":            ("G7", 1,    "G7", 14),
     "TD":                  ("G8", -10,  "G8", -3),
     "AUTOMATION":          ("G7", 0,  "G7", 14)
 }
@@ -66,7 +67,7 @@ DATE_RULES = {
 # ---------------------------------------------------------------------------
 
 def _default_dates(dept: str, gw_dates: Dict[str, str]):
-    rule = TASK_DATE_RULES.get(dept)
+    rule = DATE_RULES.get(dept)
     if not rule:
         return heute.date(), heute.date()
 
@@ -618,46 +619,36 @@ def page_task_creator():
         st.dataframe(df_hours, use_container_width=True, hide_index=True)
         print(df_hours)
         # Button to create project plan
+
         if st.button("Projektplan erstellen"):
+            # nur Abteilungen mit gebuchten Stunden
+            # Abteilungen >0 h
             df_active = df_hours[df_hours["Stunden"] > 0].copy()
 
-            # 3) Leerspalten für Start, Ende, Aufgabe (anlegen für Data-Editor)
-            df_active["Start"]   = pd.NaT
-            df_active["Ende"]    = pd.NaT
-            df_active["Aufgabe"] = ""
+            # Start/Ende spaltenweise einsetzen
+            df_active[["Start", "Ende"]] = (
+                df_active["Abteilung"]
+                .apply(lambda d: pd.Series(default_interval(d, MILESTONES)))
+            )
 
-            for _, row in df_active.iterrows():
-                dept = row["Abteilung"]
-                start_def, end_def = default_interval(dept, MILESTONES)
+            # Aufgabentexte
+            df_active["Aufgabe"] = df_active["Abteilung"].map(TASK_NAMES)
 
-                # Vier Spalten nebeneinander
-                c1, c2, c3, c4 = st.columns([2, 2, 2, 4], gap="small")
+            # Datumstyp für Streamlit
+            df_active[["Start", "Ende"]] = df_active[["Start", "Ende"]].apply(pd.to_datetime)
 
-                with c1:
-                    st.markdown(f"**{dept}**")
-
-                with c2:
-                    row_start = st.date_input(
-                        label="Start",
-                        key=f"{dept}_start",
-                        value=start_def,
-                        format="YYYY-MM-DD",
-                    )
-
-                with c3:
-                    row_end = st.date_input(
-                        label="Ende",
-                        key=f"{dept}_end",
-                        value=end_def,
-                        format="YYYY-MM-DD",
-                    )
-
-                with c4:
-                    st.text_input(
-                        label="Aufgabe",
-                        key=f"{dept}_task",
-                        value=TASK_NAMES.get(dept, ""),
-                    )
+            # Editor
+            cfg = {
+                "Start": cc.DatetimeColumn("Start", format="DD.MM.YYYY"),
+                "Ende":  cc.DatetimeColumn("Ende",  format="DD.MM.YYYY"),
+            }
+            edited = st.data_editor(
+                df_active[["Abteilung", "Start", "Ende", "Aufgabe", "Stunden"]],
+                column_config=cfg,
+                hide_index=True,
+                use_container_width=True,
+                key="task_editor",
+            )
 
     else:
         st.warning("Keine Daten  gefunden.")
