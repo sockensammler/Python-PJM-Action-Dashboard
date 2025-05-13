@@ -657,7 +657,8 @@ def page_task_creator():
         # Display the DataFrame
         st.dataframe(df_hours, use_container_width=True, hide_index=True)
         print(df_hours)
-        # Button to create project plan
+        
+        st.write("**Projektplan:**")
 
 
         # nur Abteilungen mit gebuchten Stunden
