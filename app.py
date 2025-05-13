@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta, date
 import streamlit as st
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Optional
 import streamlit.column_config as cc 
 import matplotlib.pyplot as plt
 
@@ -325,8 +325,14 @@ def fetch_overbooked_projects(projektleiter_kuerzel):
     except requests.exceptions.RequestException as e:
         st.error(f"Fehler beim Abrufen der überbuchten Projekte: {e}")
         return None
-def get_gateway_id_and_calculation_number(project_number: str) -> Optional[Dict[str, Any]]:
-    """Query GW‑header in ABAS → liefert Nummer, ID & Kalkulations‑Nr."""
+    
+def get_gateway_id_and_calculation_number(
+    project_number: str,
+) -> Optional[Tuple[str, str, str]]:
+    """
+    Liefert (calc_no, gateway_id, gateway_no).
+    Gibt None zurück, wenn etwas fehlt oder ein Fehler auftritt.
+    """
     params = {
         "action": "query",
         "database_and_group": "32:00",
@@ -338,6 +344,7 @@ def get_gateway_id_and_calculation_number(project_number: str) -> Optional[Dict[
             "operator": "EQUALS",
         },
     }
+
     try:
         r = requests.post(base_address, json=params, timeout=30)
         r.raise_for_status()
@@ -349,15 +356,24 @@ def get_gateway_id_and_calculation_number(project_number: str) -> Optional[Dict[
 
         rows = r_json.get("result_data", [])
         if not rows:
-            st.warning(f"Projekt {project_number} wurde nicht gefunden.")
+            st.warning(
+                f"Projekt {project_number} wurde nicht gefunden. "
+                "Existiert hier möglicherweise ein Teilprojekt?"
+            )
             return None
 
         row = rows[0]
-        return (
-            row.get("ycalc^nummer", ""),
-            row.get("id", ""),
-            row.get("nummer", ""),
-        )
+
+        calc_no = row.get("ycalc^nummer")
+        if not calc_no:                                   # <<–– neuer Check
+            st.error(
+                "❌ Für dieses Gateway ist keine Kalkulationsnummer "
+                "('ycalc^nummer') hinterlegt. "
+                "Bitte in ABAS nachtragen oder das Projekt prüfen."
+            )
+            return None
+
+        return calc_no, row.get("id", ""), row.get("nummer", "")
 
     except requests.exceptions.RequestException as e:
         st.error(f"HTTP-Fehler beim Abruf der Gateway-Kopfdaten: {e}")
