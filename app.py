@@ -40,7 +40,7 @@ ALL_DEPTS = list(CALC_FIELD_TO_DEPT.values())
 TASK_NAMES = {
     "BILDGEBUNG": "Imaging Design",
     "MCAD": "Konstruktionsphase (inklusive Kundenlayout)",
-    "ECAD": "ECAD KOnstruktionsphase",
+    "ECAD": "ECAD Konstruktionsphase",
     "PROJECTMANAGEMENT": "Project Planning",
     "PRODUCT DEVELOPMENT": "Special Development",  
     "SOFTWARE": "Software Installation",
@@ -705,17 +705,27 @@ def page_task_creator():
         df_active[["Start", "Ende"]] = df_active[["Start", "Ende"]].apply(pd.to_datetime)
 
 
+        DEPT_OPTIONS = list(TASK_NAMES.keys())  
         # Editor
-        cfg = {"Start": cc.DatetimeColumn("Start",format="DD.MM.YYYY"), "Ende": cc.DatetimeColumn("Ende",format="DD.MM.YYYY")}
+        cfg = {
+            "Abteilung": cc.SelectboxColumn(
+                "Abteilung",
+                options=DEPT_OPTIONS,      # Dropdown-Einträge
+                required=True,             # darf nicht leer bleiben
+                help="Zuständige Abteilung auswählen",
+            ),
+            "Start": cc.DatetimeColumn("Start", format="DD.MM.YYYY"),
+            "Ende": cc.DatetimeColumn("Ende", format="DD.MM.YYYY"),
+        }
+        
         edited = st.data_editor(
             df_active,
             column_config=cfg,
+            num_rows="dynamic",      # Zeilen hinzufügen/entfernen
             hide_index=True,
             use_container_width=True,
             key="task_editor",
-            num_rows="dynamic",   # ← ermöglicht Hinzufügen / Löschen von Zeilen      # ← keine Zeilen-Nummerierung
         )
-
 
         # Gantt zeichnen
         # Meilensteine (bereits als date-Objekte geparst)
