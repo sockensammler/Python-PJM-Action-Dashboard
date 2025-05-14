@@ -64,6 +64,20 @@ DATE_RULES = {
 }
 
 # ---------------------------------------------------------------------------
+# Zuordnung Projektaufgaben zu Sammelordnern
+# ---------------------------------------------------------------------------
+
+TASK_FOLDER_MAP = {
+    "BILDGEBUNG":          "Engineering Phase",
+    "MCAD":                "Engineering Phase",
+    "ECAD":                "Engineering Phase",
+    "PROJECTMANAGEMENT":   "",
+    "SOFTWARE":            "Production Phase",
+    "TD":                  "Production Phase",
+    "AUTOMATION":          "Production Phase"
+}
+
+# ---------------------------------------------------------------------------
 # HILFSFUNKTION – Default‑Start/Ende nach Regelwerk berechnen
 # ---------------------------------------------------------------------------
 
@@ -84,8 +98,30 @@ def _default_dates(dept: str, gw_dates: Dict[str, str]):
     e_date = _anchor_date(end_anchor) + timedelta(days=end_off)
     return s_date, e_date
 
+def create_project_task_folder(project_number, task_name, date_start, date_end):
+    
+    # JSON-Payload analog zum C# Beispiel
+    params = {
+        "action": "create",
+        "database_and_group": "149:02",
+        "data": [
+            {"name": "yprojekt", "value": project_number},
+            {"name": "namebspr", "value": task_name},
+            {"name": "ypvtyp", "value": "Sammelvorgang"},
+            {"name": "yadatum", "value": date_start},
+            {"name": "yedatum", "value": date_end }
+        ],
+    }
+    try:
+        response = requests.post(base_address, json=params)
+        response.raise_for_status()  # Löst eine Exception bei HTTP-Fehlern aus
+        return response.json()       # Erwartet eine JSON-Antwort vom Server
+    except requests.exceptions.RequestException as e:
+        print(f"Fehler beim Abrufen des Gateway Numbers: {e}")
+        return None
+
 #create a task for a specific person in ABAS ERP
-def create_project_task_for_person(project_number, person_short, task_name, time_budget, date_start, date_end):
+def create_project_task_for_person(project_number, person_short, task_name, leiart, time_budget, date_start, date_end):
     
     
     # JSON-Payload analog zum C# Beispiel
@@ -96,6 +132,7 @@ def create_project_task_for_person(project_number, person_short, task_name, time
             {"name": "yprojekt", "value": project_number},
             {"name": "ypersonal", "value": person_short},
             {"name": "namebspr", "value": task_name},
+            {"name": "yleiart", "value": leiart},
             {"name": "ypvsollstd", "value": time_budget},
             {"name": "ypvplanstd", "value": time_budget},
             {"name": "ypvforecaststd", "value": time_budget},
@@ -414,9 +451,6 @@ def get_phase_end_dates(response: dict) -> Tuple[Dict[str, str], Dict[str, date]
 
     return end_dates, milestones
 
-
-
-
 def page_overview(projektleiter):
     st.title("PJM OVERVIEW")
     projektleiter = st.text_input("Projektleiter-Kürzel eingeben:", value="MRG")
@@ -590,7 +624,6 @@ def extract_department_hours(api_response: dict) -> dict[str, int]:
                 dept_hours[dept] = dept_hours.get(dept, 0) + hours
     return dept_hours
 
-
 def _resolve_anchor(anchor: str, milestones: dict[str, date]) -> date:
     """Gibt das Basisdatum für einen Ankerstring zurück."""
     if anchor == "TODAY":
@@ -645,7 +678,7 @@ def plot_gantt(df_active: pd.DataFrame, milestones: dict[str, date]):
     return fig
 
 def page_task_creator():
-    st.title("📋 Task Creator")
+    st.title("📋 Projektplan anlegen")
     project = st.text_input("Projekt‑Nr.")
     if project:
         # Get the gateway number, gateway ID and calculation number from the project number 
@@ -692,6 +725,9 @@ def page_task_creator():
         # Abteilungen >0 h
         df_active = df_hours[df_hours["Stunden"] > 0].copy()
 
+        # << Wichtig >>
+        df_active.reset_index(drop=True, inplace=True)   # lückenlosen Index erzwingen
+
         # Start/Ende spaltenweise einsetzen
         df_active[["Start", "Ende"]] = (
             df_active["Abteilung"]
@@ -733,7 +769,49 @@ def page_task_creator():
         fig = plot_gantt(edited, milestones)
         st.pyplot(fig, use_container_width=True)
 
+        # Button für die Erstellung der Aufgaben
+        if st.button("Aufgaben anlegen"):
+            # Aufgaben für alle Abteilungen anlegen
+            for _, row in edited.iterrows():
 
+                if row["Abteilung"] == "PROJECTMANAGEMENT":
+                    # Aufgabe für Projektleiter anlegen
+                    create_project_task_for_person(
+                        project,
+                        st.session_state["projektleiter"],
+                        row["Aufgabe"],
+                        "AUFTRAGSTEUERUNG",
+                        row["Stunden"],
+                        row["Start"].strftime("%d.%m.%Y"),
+                        row["Ende"].strftime("%d.%m.%Y"),
+                    )
+                else:
+                    create_project_task_for_department(
+                        project,
+                        row["Abteilung"],
+                        row["Aufgabe"],
+                        row["Stunden"],
+                        row["Start"].strftime("%d.%m.%Y"),
+                        row["Ende"].strftime("%d.%m.%Y"),
+                    )
+            # Meilenstein DISPATCH anlegen
+            create_dispatch_milestone(
+                project,
+                st.session_state["projektleiter"],
+                MILESTONES["G8"].strftime("%d.%m.%Y"),
+                MILESTONES["G8"].strftime("%d.%m.%Y")
+            )
+            # Support-Aufgabe anlegen
+            create_project_task_for_department(
+                project,
+                "INTRAVIS",
+                "Support",
+                0,
+                MILESTONES["G8"].strftime("%d.%m.%Y"),
+                MILESTONES["G8"].strftime("%d.%m.%Y")
+            )
+
+            st.success("Aufgaben erfolgreich angelegt.")
             
             
     else:
@@ -748,7 +826,7 @@ def page_task_creator():
 def main():
     st.sidebar.title("Navigation")
     page_choice = st.sidebar.radio(
-        "Seite auswählen:", ("PJM Overview", "Task Creator"), key="page_select"
+        "Seite auswählen:", ("PJM Overview", "Projektplan anlegen"), key="page_select"
     )
 
     # Projektleiter Kürzel (needs to be available on every page)
