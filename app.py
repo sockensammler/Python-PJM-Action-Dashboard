@@ -713,13 +713,14 @@ def page_task_creator():
             hide_index=True,
             use_container_width=True,
             key="task_editor",
+            num_rows="dynamic",   # ← ermöglicht Hinzufügen / Löschen von Zeilen      # ← keine Zeilen-Nummerierung
         )
 
 
         # Gantt zeichnen
         # Meilensteine (bereits als date-Objekte geparst)
-        milestones = {"G6": MILESTONES["G6"], "G7": MILESTONES["G7"], "G8": MILESTONES["G8"]}
-        fig = plot_gantt(edited, MILESTONES)
+        milestones = {"Ende Kick-Off": MILESTONES["G6"], "Ende Design": MILESTONES["G7"], "Ende Produktion" : MILESTONES["G8"]}
+        fig = plot_gantt(edited, milestones)
         st.pyplot(fig, use_container_width=True)
 
 
