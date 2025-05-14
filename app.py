@@ -34,6 +34,8 @@ CALC_FIELD_TO_DEPT = {
     "yprjsoft":  "SOFTWARE",
 }
 ALL_DEPTS = list(CALC_FIELD_TO_DEPT.values())
+# add the Department "IPC" and "TECHNIKUM" to the list
+ALL_DEPTS += ["IPC", "TECHNIKUM"]
 
 
 #Aufgabennamen
@@ -741,12 +743,12 @@ def page_task_creator():
         df_active[["Start", "Ende"]] = df_active[["Start", "Ende"]].apply(pd.to_datetime)
 
 
-        DEPT_OPTIONS = list(TASK_NAMES.keys())  
+        
         # Editor
         cfg = {
             "Abteilung": cc.SelectboxColumn(
                 "Abteilung",
-                options=DEPT_OPTIONS,      # Dropdown-Einträge
+                options= ALL_DEPTS,      # Dropdown-Einträge
                 required=True,             # darf nicht leer bleiben
                 help="Zuständige Abteilung auswählen",
             ),
@@ -785,6 +787,39 @@ def page_task_creator():
                         row["Start"].strftime("%d.%m.%Y"),
                         row["Ende"].strftime("%d.%m.%Y"),
                     )
+                elif row["Abteilung"] == "BILDGEBUNG":
+                    # Hauptbildgebungsaufgabe anlegen
+                    create_project_task_for_department(
+                        project,
+                        row["Abteilung"],
+                        row["Aufgabe"],
+                        row["Stunden"],
+                        row["Start"].strftime("%d.%m.%Y"),
+                        row["Ende"].strftime("%d.%m.%Y"),
+                    )
+                    # Bildgebung MCAD/ECAD unterstützung anlegen
+                    imaging_support_start = row["Ende"] + timedelta(days=1)
+                    imaging_support_end = imaging_support_start + timedelta(days=14)
+                    create_project_task_for_department(
+                        project,
+                        row["Abteilung"],
+                        "Bildgebung - MCAD/ECAD Unterstützung",
+                        row["Stunden"],
+                        imaging_support_start .strftime("%d.%m.%Y"),
+                        imaging_support_end.strftime("%d.%m.%Y"),
+                    )
+                elif row["Abteilung"] == "IPC":
+                    # Hauptbildgebungsaufgabe anlegen
+                    create_project_task_for_person(
+                        project,
+                        "RH",
+                        row["Aufgabe"],
+                        "SOFTWARE",
+                        row["Stunden"],
+                        row["Start"].strftime("%d.%m.%Y"),
+                        row["Ende"].strftime("%d.%m.%Y"),
+                    )
+
                 else:
                     create_project_task_for_department(
                         project,
@@ -794,6 +829,26 @@ def page_task_creator():
                         row["Start"].strftime("%d.%m.%Y"),
                         row["Ende"].strftime("%d.%m.%Y"),
                     )
+
+            # Freigabe-Task anlegen MCAD
+            if "MCAD" in edited["Abteilung"].values:
+                create_project_task_for_department(
+                    project,
+                    "MCAD",
+                    "MCAD - Interne Freigabe",
+                    0,
+                    MILESTONES["G7"].strftime("%d.%m.%Y"),
+                    MILESTONES["G7"].strftime("%d.%m.%Y"),
+                )      
+            if "ECAD" in edited["Abteilung"].values:
+                create_project_task_for_department(
+                    project,
+                    "ECAD",
+                    "ECAD - Interne Freigabe",
+                    0,
+                    MILESTONES["G7"].strftime("%d.%m.%Y"),
+                    MILESTONES["G7"].strftime("%d.%m.%Y"),
+                )        
             # Meilenstein DISPATCH anlegen
             create_dispatch_milestone(
                 project,
