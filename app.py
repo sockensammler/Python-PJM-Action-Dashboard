@@ -8,6 +8,7 @@ import streamlit.column_config as cc
 import matplotlib.pyplot as plt
 from pathlib import Path
 import json
+from copy import deepcopy
 
 
 base_address = "http://intra-erp:4444/EPLAN_WS_FREE_EDP"
@@ -43,12 +44,6 @@ ALL_DEPTS = list(CALC_FIELD_TO_DEPT.values())
 # add the Department "IPC" and "TECHNIKUM" to the list
 ALL_DEPTS += ["IPC", "TECHNIKUM"]
 
-
-DEFAULT_SETTINGS = {
-  "doppelte_bildgebungsaufgabe": True,
-  "mcad_ecad_freigabeaufgabe": True,
-}
-
 #Aufgabennamen
 TASK_NAMES = {
     "BILDGEBUNG": "Imaging Design",
@@ -60,11 +55,7 @@ TASK_NAMES = {
     "TD": "Manual",
     "AUTOMATION": "Automation",
 }
-# ---------------------------------------------------------------------------
-# TERMINREGELN – leicht anpassbar
-# ---------------------------------------------------------------------------
-# Jeder Eintrag: (Start‑Anker, Start‑Offset‑Tage, End‑Anker, End‑Offset‑Tage)
-# Anker = "G6", "G7", "G8"  oder "TODAY"
+# -------
 DATE_RULES = {
     "BILDGEBUNG":          ("G6", 0,    "G6",  7),
     "MCAD":                ("G7", -14,  "G7", -7),
@@ -75,6 +66,19 @@ DATE_RULES = {
     "TD":                  ("G8", -10,  "G8", -3),
     "AUTOMATION":          ("G7", 0,  "G7", 14)
 }
+
+
+DEFAULT_SETTINGS = {
+    "doppelte_bildgebungsaufgabe": True,
+    "mcad_ecad_freigabeaufgabe": True,
+    "task_names": TASK_NAMES.copy(),     # aus der alten Konstante
+    "date_rules": {k: list(v) for k, v in DATE_RULES.items()},
+}
+
+# TERMINREGELN – leicht anpassbar
+# ---------------------------------------------------------------------------
+# Jeder Eintrag: (Start‑Anker, Start‑Offset‑Tage, End‑Anker, End‑Offset‑Tage)
+# Anker = "G6", "G7", "G8"  oder "TODAY"
 
 
 # ---------------------------------------------------------------------------
@@ -102,11 +106,19 @@ def release_tasks_to_departments(project_number: str):
 
 
 def load_settings() -> dict:
+    settings = deepcopy(DEFAULT_SETTINGS)
     if SETTINGS_PATH.exists():
-        return json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
-    else:
-        return DEFAULT_SETTINGS.copy()
-
+        try:
+            user_cfg = json.loads(SETTINGS_PATH.read_text("utf-8"))
+            # flach plus verschachteltes Überschreiben
+            for k, v in user_cfg.items():
+                if isinstance(v, dict) and k in settings:
+                    settings[k].update(v)
+                else:
+                    settings[k] = v
+        except json.JSONDecodeError as e:
+            st.warning(f"settings.json defekt ({e}) – benutze Defaults")
+    return settings
 def save_settings(settings: dict):
     SETTINGS_PATH.write_text(json.dumps(settings, indent=2), encoding="utf-8")
 
@@ -908,19 +920,54 @@ def page_task_creator(projektleiter: str, settings: dict):
 def page_settings(settings: dict):
     st.title("⚙️ Einstellungen")
 
-    # Checkbox-Optionen
+    # 1. einfache Flags
     settings["doppelte_bildgebungsaufgabe"] = st.checkbox(
-        "Zweite Bildgebungsaufgabe", value=settings["doppelte_bildgebungsaufgabe"],
-        help="Zur Buchung bei Unterstützung der MCAD in der Engineering Phase"
+        "Zweite Bildgebungsaufgabe",
+        value=settings.get("doppelte_bildgebungsaufgabe", False)
     )
     settings["mcad_ecad_freigabeaufgabe"] = st.checkbox(
-        "Freigabeaufgaben für MCAD und ECAD", value=settings["mcad_ecad_freigabeaufgabe"], 
-        help = "Legt separate Freigabeaufgaben für MCAD und ECAD am Ende der Engineering Phase an"
+        "MCAD/ECAD-Freigabeaufgaben anlegen",
+        value=settings.get("mcad_ecad_freigabeaufgabe", False)
     )
+
+    # 2. TASK_NAMES als editierbare Tabelle
+    st.subheader("Aufgabentexte pro Abteilung")
+    tn_df = pd.DataFrame(
+        [{"Abteilung": k, "Aufgabe": v} for k, v in settings["task_names"].items()]
+    )
+    edited_tn = st.data_editor(tn_df, hide_index=True, num_rows="dynamic")
+    settings["task_names"] = {
+        row["Abteilung"]: row["Aufgabe"] for _, row in edited_tn.iterrows()
+        if row["Abteilung"]
+    }
+
+    # 3. DATE_RULES (Vierer-Liste) editierbar machen
+    st.subheader("Terminregeln")
+    dr_df = pd.DataFrame(
+        [
+            {"Abteilung": k, "StartAnchor": v[0], "StartOff": v[1],
+             "EndAnchor": v[2], "EndOff": v[3]}
+            for k, v in settings["date_rules"].items()
+        ]
+    )
+    edited_dr = st.data_editor(
+        dr_df, hide_index=True, num_rows="dynamic",
+        column_config={
+            "StartOff": st.column_config.NumberColumn("StartOff", step=1),
+            "EndOff":   st.column_config.NumberColumn("EndOff",   step=1),
+        }
+    )
+    settings["date_rules"] = {
+        row["Abteilung"]: [row["StartAnchor"], int(row["StartOff"]),
+                           row["EndAnchor"],   int(row["EndOff"])]
+        for _, row in edited_dr.iterrows() if row["Abteilung"]
+    }
+    st.write("G6: Kick-Off / G7: Design / G8: Produktion")
 
     if st.button("Speichern"):
         save_settings(settings)
-        st.success("Einstellungen gespeichert.")        
+        st.success("Einstellungen gespeichert")
+   
 
 # ---------------------------------------------------------------------------
 # MAIN – navigation wrapper
@@ -942,6 +989,9 @@ def main():
 
     # Einstellungen laden
     settings = load_settings()
+    TASK_NAMES.update(settings["task_names"])
+    DATE_RULES.update({k: tuple(v) for k, v in settings["date_rules"].items()})
+
 
     if page_choice == "PJM Overview":
         page_overview(st.session_state["projektleiter"], settings)
