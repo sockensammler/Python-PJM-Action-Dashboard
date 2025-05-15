@@ -720,6 +720,7 @@ def page_overview(projektleiter: str, settings: dict):
     else:
         st.info("Stundendaten konnten nicht geladen werden.")
 
+# Seite zum Erstelllen eines neuen Projektplans
 def page_task_creator(projektleiter: str, settings: dict):
     st.title("📋 Projektplan anlegen")
     project = st.text_input("Projekt‑Nr.")
