@@ -6,8 +6,14 @@ import streamlit as st
 from typing import Dict, Tuple, Optional
 import streamlit.column_config as cc 
 import matplotlib.pyplot as plt
+from pathlib import Path
+import json
+
 
 base_address = "http://intra-erp:4444/EPLAN_WS_FREE_EDP"
+
+SETTINGS_PATH = Path(__file__).parent / "settings.json"
+
 # Aktuelles Datum und in 10 Arbeitstagen & 3 Tage zurück
 heute = datetime.today()
 arbeitstage_10spaeter = np.busday_offset(heute.date(), 10, roll='forward')
@@ -38,10 +44,15 @@ ALL_DEPTS = list(CALC_FIELD_TO_DEPT.values())
 ALL_DEPTS += ["IPC", "TECHNIKUM"]
 
 
+DEFAULT_SETTINGS = {
+  "doppelte_bildgebungsaufgabe": True,
+  "mcad_ecad_freigabeaufgabe": True,
+}
+
 #Aufgabennamen
 TASK_NAMES = {
     "BILDGEBUNG": "Imaging Design",
-    "MCAD": "Konstruktionsphase (inklusive Kundenlayout)",
+    "MCAD": "MCAD Konstruktionsphase (inklusive Kundenlayout)",
     "ECAD": "ECAD Konstruktionsphase",
     "PROJECTMANAGEMENT": "Project Planning",
     "PRODUCT DEVELOPMENT": "Special Development",  
@@ -65,23 +76,39 @@ DATE_RULES = {
     "AUTOMATION":          ("G7", 0,  "G7", 14)
 }
 
-# ---------------------------------------------------------------------------
-# Zuordnung Projektaufgaben zu Sammelordnern
-# ---------------------------------------------------------------------------
-
-TASK_FOLDER_MAP = {
-    "BILDGEBUNG":          "Engineering Phase",
-    "MCAD":                "Engineering Phase",
-    "ECAD":                "Engineering Phase",
-    "PROJECTMANAGEMENT":   "",
-    "SOFTWARE":            "Production Phase",
-    "TD":                  "Production Phase",
-    "AUTOMATION":          "Production Phase"
-}
 
 # ---------------------------------------------------------------------------
 # HILFSFUNKTION – Default‑Start/Ende nach Regelwerk berechnen
 # ---------------------------------------------------------------------------
+def release_tasks_to_departments(project_number: str):
+        params = {
+        "action": "infosystem",
+        "infosystem": "PRJMAUFAN",
+        "data": [
+            {"name": "yprojekt", "value": project_number},
+            {"name": "yvondatum", "value": ""},
+            {"name": "ybisdatum", "value": ""},
+            {"name": "bstart", "value": "1"},
+            {"name": "ybuanlegen", "value": "1"}
+        ]
+        }
+        try:
+            res = requests.post(base_address, json=params, timeout=30)
+            res.raise_for_status()
+            return res.json()
+        except requests.exceptions.RequestException as e:
+            st.error(f"Fehler beim Abrufen der Dispatch-Daten: {e}")
+            return None
+
+
+def load_settings() -> dict:
+    if SETTINGS_PATH.exists():
+        return json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+    else:
+        return DEFAULT_SETTINGS.copy()
+
+def save_settings(settings: dict):
+    SETTINGS_PATH.write_text(json.dumps(settings, indent=2), encoding="utf-8")
 
 def _default_dates(dept: str, gw_dates: Dict[str, str]):
     rule = DATE_RULES.get(dept)
@@ -453,7 +480,86 @@ def get_phase_end_dates(response: dict) -> Tuple[Dict[str, str], Dict[str, date]
 
     return end_dates, milestones
 
-def page_overview(projektleiter):
+
+
+def extract_department_hours(api_response: dict) -> dict[str, int]:
+    """
+    Convert the API's 'result_data' section to {department: hours}.
+
+    Parameters
+    ----------
+    api_response : dict
+        The full JSON object returned by the API call.
+
+    Returns
+    -------
+    dict[str, int]
+        Aggregated hours keyed by the human-readable department names.
+    """
+    dept_hours: dict[str, int] = {}
+    for row in api_response.get("result_data", []):
+        # row is a dict with raw calc fields and numeric hour totals
+        for raw_field, hours in row.items():
+            if raw_field in CALC_FIELD_TO_DEPT and isinstance(hours, (int, float)):
+                dept = CALC_FIELD_TO_DEPT[raw_field]
+                # accumulate in case the same dept appears in multiple rows
+                dept_hours[dept] = dept_hours.get(dept, 0) + hours
+    return dept_hours
+
+def _resolve_anchor(anchor: str, milestones: dict[str, date]) -> date:
+    """Gibt das Basisdatum für einen Ankerstring zurück."""
+    if anchor == "TODAY":
+        return date.today()
+    return milestones[anchor]
+
+def default_interval(dept: str, milestones: dict[str, date]) -> tuple[date, date]:
+    """Berechnet Start- und Enddatum gemäss DATE_RULES."""
+    a_s, off_s, a_e, off_e = DATE_RULES[dept]
+    start = _resolve_anchor(a_s, milestones) + timedelta(days=off_s)
+    end   = _resolve_anchor(a_e, milestones) + timedelta(days=off_e)
+    return start, end
+
+def plot_gantt(df_active: pd.DataFrame, milestones: dict[str, date]):
+    """
+    Erstellt ein Gantt-Diagramm mit
+      • einer Task-Zeile pro Abteilung
+      • Kalenderwochen-Gitternetz
+      • Meilenstein-Linien G6–G8
+    Gibt eine matplotlib-Figure zurück.
+    """
+    df = df_active.copy()
+    df["Start"] = pd.to_datetime(df["Start"])
+    df["Ende"]  = pd.to_datetime(df["Ende"])
+    df = df.sort_values("Start")
+
+    # Achsen-Setup
+    fig, ax = plt.subplots(figsize=(10, 0.6 * len(df) + 2))
+    y_pos = range(len(df))
+
+    # Tasks als horizontale Balken
+    for i, (_, r) in enumerate(df.iterrows()):
+        ax.barh(i, (r["Ende"] - r["Start"]).days, left=r["Start"])
+        ax.text(r["Start"], i, f' {r["Abteilung"]}', va="center")
+
+    # Meilensteine (gestrichelte Linien)
+    for label, when in milestones.items():
+        ax.axvline(when, linestyle="--")
+        ax.text(when, len(df) + 0.2, label, rotation=90, va="bottom")
+
+    # Kalenderwochen-Gitternetz & Beschriftung
+    start, end = df["Start"].min().normalize(), df["Ende"].max().normalize()
+    for w in pd.date_range(start, end, freq="W-MON"):
+        ax.axvline(w, alpha=0.2, linewidth=0.5)
+        ax.text(w, -1, f'KW{w.isocalendar().week}', rotation=90,
+                va="top", fontsize=12)
+
+    ax.set_yticks([])
+    ax.set_ylim(-1, len(df) + 1)
+    ax.set_xlabel("Datum")
+    fig.tight_layout()
+    return fig
+
+def page_overview(projektleiter: str, settings: dict):
     st.title("PJM OVERVIEW")
     projektleiter = st.text_input("Projektleiter-Kürzel eingeben:", value="MRG")
     if not projektleiter:
@@ -602,84 +708,7 @@ def page_overview(projektleiter):
     else:
         st.info("Stundendaten konnten nicht geladen werden.")
 
-def extract_department_hours(api_response: dict) -> dict[str, int]:
-    """
-    Convert the API's 'result_data' section to {department: hours}.
-
-    Parameters
-    ----------
-    api_response : dict
-        The full JSON object returned by the API call.
-
-    Returns
-    -------
-    dict[str, int]
-        Aggregated hours keyed by the human-readable department names.
-    """
-    dept_hours: dict[str, int] = {}
-    for row in api_response.get("result_data", []):
-        # row is a dict with raw calc fields and numeric hour totals
-        for raw_field, hours in row.items():
-            if raw_field in CALC_FIELD_TO_DEPT and isinstance(hours, (int, float)):
-                dept = CALC_FIELD_TO_DEPT[raw_field]
-                # accumulate in case the same dept appears in multiple rows
-                dept_hours[dept] = dept_hours.get(dept, 0) + hours
-    return dept_hours
-
-def _resolve_anchor(anchor: str, milestones: dict[str, date]) -> date:
-    """Gibt das Basisdatum für einen Ankerstring zurück."""
-    if anchor == "TODAY":
-        return date.today()
-    return milestones[anchor]
-
-def default_interval(dept: str, milestones: dict[str, date]) -> tuple[date, date]:
-    """Berechnet Start- und Enddatum gemäss DATE_RULES."""
-    a_s, off_s, a_e, off_e = DATE_RULES[dept]
-    start = _resolve_anchor(a_s, milestones) + timedelta(days=off_s)
-    end   = _resolve_anchor(a_e, milestones) + timedelta(days=off_e)
-    return start, end
-
-def plot_gantt(df_active: pd.DataFrame, milestones: dict[str, date]):
-    """
-    Erstellt ein Gantt-Diagramm mit
-      • einer Task-Zeile pro Abteilung
-      • Kalenderwochen-Gitternetz
-      • Meilenstein-Linien G6–G8
-    Gibt eine matplotlib-Figure zurück.
-    """
-    df = df_active.copy()
-    df["Start"] = pd.to_datetime(df["Start"])
-    df["Ende"]  = pd.to_datetime(df["Ende"])
-    df = df.sort_values("Start")
-
-    # Achsen-Setup
-    fig, ax = plt.subplots(figsize=(10, 0.6 * len(df) + 2))
-    y_pos = range(len(df))
-
-    # Tasks als horizontale Balken
-    for i, (_, r) in enumerate(df.iterrows()):
-        ax.barh(i, (r["Ende"] - r["Start"]).days, left=r["Start"])
-        ax.text(r["Start"], i, f' {r["Abteilung"]}', va="center")
-
-    # Meilensteine (gestrichelte Linien)
-    for label, when in milestones.items():
-        ax.axvline(when, linestyle="--")
-        ax.text(when, len(df) + 0.2, label, rotation=90, va="bottom")
-
-    # Kalenderwochen-Gitternetz & Beschriftung
-    start, end = df["Start"].min().normalize(), df["Ende"].max().normalize()
-    for w in pd.date_range(start, end, freq="W-MON"):
-        ax.axvline(w, alpha=0.2, linewidth=0.5)
-        ax.text(w, -1, f'KW{w.isocalendar().week}', rotation=90,
-                va="top", fontsize=8)
-
-    ax.set_yticks([])
-    ax.set_ylim(-1, len(df) + 1)
-    ax.set_xlabel("Datum")
-    fig.tight_layout()
-    return fig
-
-def page_task_creator():
+def page_task_creator(projektleiter: str, settings: dict):
     st.title("📋 Projektplan anlegen")
     project = st.text_input("Projekt‑Nr.")
     if project:
@@ -797,17 +826,18 @@ def page_task_creator():
                         row["Start"].strftime("%d.%m.%Y"),
                         row["Ende"].strftime("%d.%m.%Y"),
                     )
+                    if settings["doppelte_bildgebungsaufgabe"] == True:
                     # Bildgebung MCAD/ECAD unterstützung anlegen
-                    imaging_support_start = row["Ende"] + timedelta(days=1)
-                    imaging_support_end = imaging_support_start + timedelta(days=14)
-                    create_project_task_for_department(
-                        project,
-                        row["Abteilung"],
-                        "Bildgebung - MCAD/ECAD Unterstützung",
-                        row["Stunden"],
-                        imaging_support_start .strftime("%d.%m.%Y"),
-                        imaging_support_end.strftime("%d.%m.%Y"),
-                    )
+                        imaging_support_start = row["Ende"] + timedelta(days=1)
+                        imaging_support_end = imaging_support_start + timedelta(days=14)
+                        create_project_task_for_department(
+                            project,
+                            row["Abteilung"],
+                            "Bildgebung - MCAD/ECAD Unterstützung",
+                            row["Stunden"],
+                            imaging_support_start .strftime("%d.%m.%Y"),
+                            imaging_support_end.strftime("%d.%m.%Y"),
+                        )
                 elif row["Abteilung"] == "IPC":
                     # Hauptbildgebungsaufgabe anlegen
                     create_project_task_for_person(
@@ -830,25 +860,26 @@ def page_task_creator():
                         row["Ende"].strftime("%d.%m.%Y"),
                     )
 
+            if settings["mcad_ecad_freigabeaufgabe"] == True:
             # Freigabe-Task anlegen MCAD
-            if "MCAD" in edited["Abteilung"].values:
-                create_project_task_for_department(
-                    project,
-                    "MCAD",
-                    "MCAD - Interne Freigabe",
-                    0,
-                    MILESTONES["G7"].strftime("%d.%m.%Y"),
-                    MILESTONES["G7"].strftime("%d.%m.%Y"),
-                )      
-            if "ECAD" in edited["Abteilung"].values:
-                create_project_task_for_department(
-                    project,
-                    "ECAD",
-                    "ECAD - Interne Freigabe",
-                    0,
-                    MILESTONES["G7"].strftime("%d.%m.%Y"),
-                    MILESTONES["G7"].strftime("%d.%m.%Y"),
-                )        
+                if "MCAD" in edited["Abteilung"].values:
+                    create_project_task_for_department(
+                        project,
+                        "MCAD",
+                        "MCAD - Interne Freigabe",
+                        0,
+                        MILESTONES["G7"].strftime("%d.%m.%Y"),
+                        MILESTONES["G7"].strftime("%d.%m.%Y"),
+                    )      
+                if "ECAD" in edited["Abteilung"].values:
+                    create_project_task_for_department(
+                        project,
+                        "ECAD",
+                        "ECAD - Interne Freigabe",
+                        0,
+                        MILESTONES["G7"].strftime("%d.%m.%Y"),
+                        MILESTONES["G7"].strftime("%d.%m.%Y"),
+                    )        
             # Meilenstein DISPATCH anlegen
             create_dispatch_milestone(
                 project,
@@ -865,14 +896,31 @@ def page_task_creator():
                 MILESTONES["G8"].strftime("%d.%m.%Y"),
                 MILESTONES["G8"].strftime("%d.%m.%Y")
             )
+            # Release Tasks anlegen
 
             st.success("Aufgaben erfolgreich angelegt.")
-            
+
             
     else:
         st.warning("Keine Daten  gefunden.")
 
-        
+
+def page_settings(settings: dict):
+    st.title("⚙️ Einstellungen")
+
+    # Checkbox-Optionen
+    settings["doppelte_bildgebungsaufgabe"] = st.checkbox(
+        "Zweite Bildgebungsaufgabe", value=settings["doppelte_bildgebungsaufgabe"],
+        help="Zur Buchung bei Unterstützung der MCAD in der Engineering Phase"
+    )
+    settings["mcad_ecad_freigabeaufgabe"] = st.checkbox(
+        "Freigabeaufgaben für MCAD und ECAD", value=settings["mcad_ecad_freigabeaufgabe"], 
+        help = "Legt separate Freigabeaufgaben für MCAD und ECAD am Ende der Engineering Phase an"
+    )
+
+    if st.button("Speichern"):
+        save_settings(settings)
+        st.success("Einstellungen gespeichert.")        
 
 # ---------------------------------------------------------------------------
 # MAIN – navigation wrapper
@@ -881,23 +929,27 @@ def page_task_creator():
 def main():
     st.sidebar.title("Navigation")
     page_choice = st.sidebar.radio(
-        "Seite auswählen:", ("PJM Overview", "Projektplan anlegen"), key="page_select"
+        "Seite auswählen:",
+        ("PJM Overview", "Projektplan anlegen", "Einstellungen"),  # hier ergänzt
+        key="page_select"
     )
 
-    # Projektleiter Kürzel (needs to be available on every page)
+    # Projektleiter-Kürzel wie gehabt …
     if "projektleiter" not in st.session_state:
         st.session_state["projektleiter"] = "MRG"
-    st.sidebar.text_input(
-        "Projektleiter‑Kürzel:",
-        key="projektleiter",
-        value=st.session_state["projektleiter"],
-    )
+    st.sidebar.text_input("Projektleiter-Kürzel:", key="projektleiter",
+                          value=st.session_state["projektleiter"])
 
-    # Route to the selected page
+    # Einstellungen laden
+    settings = load_settings()
+
     if page_choice == "PJM Overview":
-        page_overview(st.session_state["projektleiter"])
+        page_overview(st.session_state["projektleiter"], settings)
+    elif page_choice == "Projektplan anlegen":
+        page_task_creator(st.session_state["projektleiter"], settings)
     else:
-        page_task_creator()
+        page_settings(settings)
+
 
 
 if __name__ == "__main__":
