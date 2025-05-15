@@ -675,6 +675,10 @@ def page_overview(projektleiter: str, settings: dict):
 # Seite zum Erstelllen eines neuen Projektplans
 def page_task_creator(projektleiter: str, settings: dict):
     st.title("📋 Projektplan anlegen")
+    projektleiter = st.session_state.get("projektleiter")
+    if not projektleiter:
+        st.warning("Bitte ein Projektleiter-Kürzel eingeben.")
+        return
     project = st.text_input("Projekt‑Nr.")
     if project:
         # Get the gateway number, gateway ID and calculation number from the project number 
