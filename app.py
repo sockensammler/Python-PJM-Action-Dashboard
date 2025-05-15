@@ -573,7 +573,7 @@ def plot_gantt(df_active: pd.DataFrame, milestones: dict[str, date]):
 
 def page_overview(projektleiter: str, settings: dict):
     st.title("PJM OVERVIEW")
-    projektleiter = st.text_input("Projektleiter-Kürzel eingeben:", value="MRG")
+    projektleiter = st.session_state.get("projektleiter")
     if not projektleiter:
         st.warning("Bitte ein Projektleiter-Kürzel eingeben.")
         return
@@ -760,6 +760,15 @@ def page_task_creator(projektleiter: str, settings: dict):
         df_hours.sort_values(by='Abteilung', inplace=True)
         # Display the DataFrame
         st.dataframe(df_hours, use_container_width=True, hide_index=True)
+        prod_hours = df_hours.loc[df_hours["Abteilung"] == "PRODUCT DEVELOPMENT", "Stunden"]
+
+        if not prod_hours.empty and prod_hours.iloc[0] > 0:
+            st.warning(
+                f"⚠️ Die Abteilung **PRODUCT DEVELOPMENT** hat "
+                f"{prod_hours.iloc[0]:.1f} kalkulierte Stunden. Anstatt dieser Aufgabe müssen Aufgaben für die entsprechenden Fachabteilungen angelegt werden!",
+                icon="⚠️"
+            )
+
         print(df_hours)
         
         st.write("**Projektplan:**")
@@ -984,7 +993,7 @@ def main():
 
     # Projektleiter-Kürzel wie gehabt …
     if "projektleiter" not in st.session_state:
-        st.session_state["projektleiter"] = "MRG"
+        st.session_state["projektleiter"] = ""
     st.sidebar.text_input("Projektleiter-Kürzel:", key="projektleiter",
                           value=st.session_state["projektleiter"])
 
