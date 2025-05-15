@@ -84,25 +84,48 @@ DEFAULT_SETTINGS = {
 # ---------------------------------------------------------------------------
 # HILFSFUNKTION – Default‑Start/Ende nach Regelwerk berechnen
 # ---------------------------------------------------------------------------
+def post_json(params: dict,
+              *,
+              err_msg: str = "Fehler beim Abrufen der Daten",
+              address: str = base_address,
+              timeout: int = 30):
+    """
+    Sendet einen POST-Request an `address` und gibt bei Erfolg die JSON-Antwort
+    zurück. Bei Fehlern wird eine Streamlit-Fehlermeldung angezeigt und `None`
+    geliefert.
+
+    Parameters
+    ----------
+    params   : JSON-Payload für den Request
+    err_msg  : Basis-Text für die Fehlermeldung (wird um die Exception ergänzt)
+    address  : Ziel-URL (default: globales `base_address`)
+    timeout  : Sekunden bis zum Timeout (default: 30)
+
+    Returns
+    -------
+    dict | None
+    """
+    try:
+        res = requests.post(address, json=params, timeout=timeout)
+        res.raise_for_status()
+        return res.json()
+    except requests.exceptions.RequestException as e:
+        st.error(f"{err_msg}: {e}")
+        return None
+
 def release_tasks_to_departments(project_number: str):
-        params = {
-        "action": "infosystem",
-        "infosystem": "PRJMAUFAN",
-        "data": [
-            {"name": "yprojekt", "value": project_number},
-            {"name": "yvondatum", "value": ""},
-            {"name": "ybisdatum", "value": ""},
-            {"name": "bstart", "value": "1"},
-            {"name": "ybuanlegen", "value": "1"}
-        ]
-        }
-        try:
-            res = requests.post(base_address, json=params, timeout=30)
-            res.raise_for_status()
-            return res.json()
-        except requests.exceptions.RequestException as e:
-            st.error(f"Fehler beim Abrufen der Dispatch-Daten: {e}")
-            return None
+    params = {
+    "action": "infosystem",
+    "infosystem": "PRJMAUFAN",
+    "data": [
+        {"name": "yprojekt", "value": project_number},
+        {"name": "yvondatum", "value": ""},
+        {"name": "ybisdatum", "value": ""},
+        {"name": "bstart", "value": "1"},
+        {"name": "ybuanlegen", "value": "1"}
+    ]
+    }
+    return post_json(params, err_msg="Fehler beim Abrufen der Dispatch-Daten")
 
 
 def load_settings() -> dict:
@@ -119,6 +142,7 @@ def load_settings() -> dict:
         except json.JSONDecodeError as e:
             st.warning(f"settings.json defekt ({e}) – benutze Defaults")
     return settings
+
 def save_settings(settings: dict):
     SETTINGS_PATH.write_text(json.dumps(settings, indent=2), encoding="utf-8")
 
@@ -153,13 +177,7 @@ def create_project_task_folder(project_number, task_name, date_start, date_end):
             {"name": "yedatum", "value": date_end }
         ],
     }
-    try:
-        response = requests.post(base_address, json=params)
-        response.raise_for_status()  # Löst eine Exception bei HTTP-Fehlern aus
-        return response.json()       # Erwartet eine JSON-Antwort vom Server
-    except requests.exceptions.RequestException as e:
-        print(f"Fehler beim Abrufen des Gateway Numbers: {e}")
-        return None
+    return post_json(params, err_msg="Fehler beim Abrufen der Dispatch-Daten")
 
 #create a task for a specific person in ABAS ERP
 def create_project_task_for_person(project_number, person_short, task_name, leiart, time_budget, date_start, date_end):
@@ -181,13 +199,7 @@ def create_project_task_for_person(project_number, person_short, task_name, leia
             {"name": "yedatum", "value": date_end }
         ],
     }
-    try:
-        response = requests.post(base_address, json=params)
-        response.raise_for_status()  # Löst eine Exception bei HTTP-Fehlern aus
-        return response.json()       # Erwartet eine JSON-Antwort vom Server
-    except requests.exceptions.RequestException as e:
-        print(f"Fehler beim Abrufen des Gateway Numbers: {e}")
-        return None
+    return post_json(params, err_msg="Fehler beim Abrufen der Dispatch-Daten")
 
 def create_project_task_for_department(project_number, department_short, task_name, time_budget, date_start, date_end):
     
@@ -208,13 +220,7 @@ def create_project_task_for_department(project_number, department_short, task_na
             {"name": "yedatum", "value": date_end }
         ],
     }
-    try:
-        response = requests.post(base_address, json=params)
-        response.raise_for_status()  # Löst eine Exception bei HTTP-Fehlern aus
-        return response.json()       # Erwartet eine JSON-Antwort vom Server
-    except requests.exceptions.RequestException as e:
-        print(f"Fehler beim Abrufen des Gateway Numbers: {e}")
-        return None
+    return post_json(params, err_msg="Fehler beim Abrufen der Dispatch-Daten")
 
 def create_dispatch_milestone(project_number, person_short, date_start, date_end):
     
@@ -231,13 +237,7 @@ def create_dispatch_milestone(project_number, person_short, date_start, date_end
             {"name": "namebspr", "value": "Dispatch"}
         ],
     }
-    try:
-        response = requests.post(base_address, json=params)
-        response.raise_for_status()  # Löst eine Exception bei HTTP-Fehlern aus
-        return response.json()       # Erwartet eine JSON-Antwort vom Server
-    except requests.exceptions.RequestException as e:
-        print(f"Fehler beim Abrufen des Gateway Numbers: {e}")
-        return None
+    return post_json(params, err_msg="Fehler beim Abrufen der Dispatch-Daten")
 
 def fetch_gateway_data(gateway_id):
         # JSON-Payload analog zum C# Beispiel
@@ -247,13 +247,7 @@ def fetch_gateway_data(gateway_id):
         "fields": [],
         "table_fields": ["ytzid","ytname","ytenddate"]
     }
-    try:
-        response = requests.post(base_address, json=params)
-        response.raise_for_status()  # Löst eine Exception bei HTTP-Fehlern aus
-        return response.json()       # Erwartet eine JSON-Antwort vom Server
-    except requests.exceptions.RequestException as e:
-        print(f"Fehler beim Abrufen des Gateway Numbers: {e}")
-        return None
+    return post_json(params, err_msg="Fehler beim Abrufen der Dispatch-Daten")
 
 def fetch_calculation_hours(calculation_number):
     params = {
@@ -269,13 +263,7 @@ def fetch_calculation_hours(calculation_number):
             "operator": "EQUALS"
         }
     }
-    try:
-        res = requests.post(base_address, json=params, timeout=30)
-        res.raise_for_status()
-        return res.json()
-    except requests.exceptions.RequestException as e:
-        st.error(f"Fehler beim Abrufen der Daten: {e}")
-        return None
+    return post_json(params, err_msg="Fehler beim Abrufen der Dispatch-Daten")
 
 
 def fetch_gateway_infosystem_sold_phase():
@@ -292,13 +280,7 @@ def fetch_gateway_infosystem_sold_phase():
             "ytkundeans^name","ytstandortans^name","ytprjverantw^such"
         ]
     }
-    try:
-        res = requests.post(base_address, json=params, timeout=30)
-        res.raise_for_status()
-        return res.json()
-    except requests.exceptions.RequestException as e:
-        st.error(f"Fehler beim Abrufen der Daten: {e}")
-        return None
+    return post_json(params, err_msg="Fehler beim Abrufen der Dispatch-Daten")
 
 def fetch_gateway_infosystem(projektleiter_kuerzel):
     params = {
@@ -314,13 +296,7 @@ def fetch_gateway_infosystem(projektleiter_kuerzel):
             "ytkundeans^name","ytstandortans^name","ytprjverantw^such"
         ]
     }
-    try:
-        res = requests.post(base_address, json=params, timeout=30)
-        res.raise_for_status()
-        return res.json()
-    except requests.exceptions.RequestException as e:
-        st.error(f"Fehler beim Abrufen der Daten: {e}")
-        return None
+    return post_json(params, err_msg="Fehler beim Abrufen der Dispatch-Daten")
 
 def fetch_dispatch_infosystem(projektleiter_kuerzel):
     params = {
@@ -337,13 +313,7 @@ def fetch_dispatch_infosystem(projektleiter_kuerzel):
             "ytserprodname^name","ytwarenempfname^name","ytdispatch"
         ]
     }
-    try:
-        res = requests.post(base_address, json=params, timeout=30)
-        res.raise_for_status()
-        return res.json()
-    except requests.exceptions.RequestException as e:
-        st.error(f"Fehler beim Abrufen der Dispatch-Daten: {e}")
-        return None
+    return post_json(params, err_msg="Fehler beim Abrufen der Dispatch-Daten")
     
 def fetch_open_tasks(projektleiter_kuerzel):
     params = {
@@ -355,13 +325,7 @@ def fetch_open_tasks(projektleiter_kuerzel):
         ],
         "table_fields": ["taufgabe^nummer","taufgabe^projekt^nummer","taufgabe^yprojektname^namebspr","taufgabe^start","taufgabe^end","taufgabenname^namebspr","tbestaetigername^namebspr"]
     }
-    try:
-        res = requests.post(base_address, json=params, timeout=30)
-        res.raise_for_status()
-        return res.json()
-    except requests.exceptions.RequestException as e:
-        st.error(f"Fehler beim Abrufen der Aufgaben: {e}")
-        return None
+    return post_json(params, err_msg="Fehler beim Abrufen der Dispatch-Daten")
 
 def fetch_booked_hours(projektleiter_kuerzel):
     params = {
@@ -375,13 +339,7 @@ def fetch_booked_hours(projektleiter_kuerzel):
         ],
         "table_fields": ["yadatum","ystdtats","ytprojekt^nummer","ytprojekt^namebspr"]
     }
-    try:
-        res = requests.post(base_address, json=params, timeout=30)
-        res.raise_for_status()
-        return res.json()
-    except requests.exceptions.RequestException as e:
-        st.error(f"Fehler beim Abrufen der gebuchten Stunden: {e}")
-        return None
+    return post_json(params, err_msg="Fehler beim Abrufen der Dispatch-Daten")
     
 def fetch_overbooked_projects(projektleiter_kuerzel):
     params = {
@@ -396,13 +354,7 @@ def fetch_overbooked_projects(projektleiter_kuerzel):
         ],
         "table_fields": ["ytprojekt^nummer","ytprojname^namebspr","ytfortistbudget","ytsollstd","ytiststd"]
     }
-    try:
-        res = requests.post(base_address, json=params, timeout=30)
-        res.raise_for_status()
-        return res.json()
-    except requests.exceptions.RequestException as e:
-        st.error(f"Fehler beim Abrufen der überbuchten Projekte: {e}")
-        return None
+    return post_json(params, err_msg="Fehler beim Abrufen der Dispatch-Daten")
     
 def get_gateway_id_and_calculation_number(
     project_number: str,
