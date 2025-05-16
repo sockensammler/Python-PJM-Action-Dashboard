@@ -130,6 +130,23 @@ def post_json(params: dict,
         st.error(f"{err_msg}: {e}")
         return None
 
+def roll_to_business_day(ts: "pd.Timestamp | pd.NaTType",
+                         *,
+                         how: str = "forward") -> "pd.Timestamp | pd.NaTType":
+    """
+    Rollt ein Datum auf den nächsten/vorherigen Werktag.
+    • ts darf Timestamp, datetime.date oder NaT sein.
+    • how = 'forward'  → nächster Werktag (Mo-Fr)
+      how = 'backward' → vorheriger Werktag
+    """
+    if pd.isna(ts):                # NaT/NaN bleibt NaT
+        return ts
+
+    # in numpy-Datums-Skalierung bringen (D-Tage seit 1970-01-01)
+    d64 = np.datetime64(ts, "D")
+    rolled = np.busday_offset(d64, 0, roll=how)
+    return pd.Timestamp(rolled)
+
 def map_leistungsart(key: str, *, default: str | None = None) -> str:
     """
     Gibt den gemappten Wert zurück; Keys werden
@@ -508,8 +525,12 @@ def _resolve_anchor(anchor: str, milestones: dict[str, date]) -> date:
 def default_interval(dept: str, milestones: dict[str, date]) -> tuple[date, date]:
     """Berechnet Start- und Enddatum gemäss DATE_RULES."""
     a_s, off_s, a_e, off_e = DATE_RULES[dept]
-    start = _resolve_anchor(a_s, milestones) + timedelta(days=off_s)
-    end   = _resolve_anchor(a_e, milestones) + timedelta(days=off_e)
+    start = roll_to_business_day(
+            _resolve_anchor(a_s, milestones) + timedelta(days=off_s),
+            how="forward")
+    end   = roll_to_business_day(
+                _resolve_anchor(a_e, milestones) + timedelta(days=off_e),
+                how="backward")
     return start, end
 
 def plot_gantt(df_active: pd.DataFrame, milestones: dict[str, date]):
@@ -827,6 +848,11 @@ def page_task_creator(projektleiter: str, settings: dict):
 
         # Vollständiges DataFrame zum Weiter-Verarbeiten
         edited = edited_view.copy()
+        for col, direction in (("Start", "forward"), ("Ende", "backward")):
+            edited[col] = (
+                pd.to_datetime(edited[col], errors="coerce", dayfirst=True)  # → Timestamps / NaT
+                .apply(lambda ts: roll_to_business_day(ts, how=direction))   # Werktag-Fix
+            )
         edited["Leistungsart"] = edited["Abteilung"].apply(map_leistungsart)
 
 
@@ -876,8 +902,8 @@ def page_task_creator(projektleiter: str, settings: dict):
                     )
                     if settings["doppelte_bildgebungsaufgabe"] == True:
                     # Bildgebung MCAD/ECAD unterstützung anlegen
-                        imaging_support_start = row["Ende"] + timedelta(days=1)
-                        imaging_support_end = imaging_support_start + timedelta(days=14)
+                        imaging_support_start = roll_to_business_day(row["Ende"] + timedelta(days=1))
+                        imaging_support_end = roll_to_business_day(imaging_support_start + timedelta(days=14), how="backward")
                         create_project_task_for_department(
                             project,
                             row["Abteilung"],
