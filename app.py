@@ -785,6 +785,12 @@ def page_task_creator(projektleiter: str, settings: dict):
             .apply(lambda d: pd.Series(default_interval(d, MILESTONES)))
         )
 
+        # NEU: Leistungsart sofort hinterlegen …
+        df_active["Leistungsart"] = df_active["Abteilung"].apply(map_leistungsart)
+
+        # … und die Spalte für die GUI ausblenden
+        df_view = df_active.drop(columns=["Leistungsart"])
+
         # ⇣ NEU: chronologisch sortieren
         df_active.sort_values("Start", inplace=True)
         df_active.reset_index(drop=True, inplace=True)   
@@ -809,14 +815,19 @@ def page_task_creator(projektleiter: str, settings: dict):
             "Ende": cc.DatetimeColumn("Ende", format="DD.MM.YYYY"),
         }
         
-        edited = st.data_editor(
-            df_active,
+        edited_view = st.data_editor(
+            df_view,
             column_config=cfg,
             num_rows="dynamic",      # Zeilen hinzufügen/entfernen
             hide_index=True,
             use_container_width=True,
             key="task_editor",
         )
+
+        # Vollständiges DataFrame zum Weiter-Verarbeiten
+        edited = edited_view.copy()
+        edited["Leistungsart"] = edited["Abteilung"].apply(map_leistungsart)
+
 
         # Hinweise zu zusätzlichen Aufgaben
         if settings["doppelte_bildgebungsaufgabe"] == True and "BILDGEBUNG" in edited["Abteilung"].values:
@@ -856,7 +867,7 @@ def page_task_creator(projektleiter: str, settings: dict):
                     create_project_task_for_department(
                         project,
                         row["Abteilung"],
-                        map_leistungsart(row["Abteilung"]),
+                        row["Leistungsart"],   
                         row["Aufgabe"],
                         row["Stunden"],
                         row["Start"].strftime("%d.%m.%Y"),
@@ -892,7 +903,7 @@ def page_task_creator(projektleiter: str, settings: dict):
                     create_project_task_for_department(
                         project,
                         row["Abteilung"],
-                        map_leistungsart(row["Abteilung"]),
+                        row["Leistungsart"],   
                         row["Aufgabe"],
                         row["Stunden"],
                         row["Start"].strftime("%d.%m.%Y"),
@@ -916,8 +927,7 @@ def page_task_creator(projektleiter: str, settings: dict):
                     create_project_task_for_department(
                         project,
                         "ECAD",
-                        "ECAD",
-                        map_leistungsart(row["Abteilung"]),
+                        row["Leistungsart"],   
                         "ECAD - Interne Freigabe",
                         0,
                         MILESTONES["G7"].strftime("%d.%m.%Y"),
@@ -935,7 +945,7 @@ def page_task_creator(projektleiter: str, settings: dict):
             create_project_task_for_department(
                 project,
                 "INTRAVIS",
-                map_leistungsart("INTRAVIS"),
+                row["Leistungsart"],   
                 "Support",
                 0,
                 MILESTONES["G8"].strftime("%d.%m.%Y"),
