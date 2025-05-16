@@ -766,8 +766,10 @@ def page_task_creator(projektleiter: str, settings: dict):
         gateway_id         = gw_info.gateway_id
         gateway_number     = gw_info.gateway_number
         gateway_data = fetch_gateway_data(gateway_id)
-        global MILESTONES
-        end_dates, MILESTONES = get_phase_end_dates(gateway_data)
+        
+        # Meilensteine nur für diese Session speichern
+        end_dates, milestones = get_phase_end_dates(gateway_data)
+        st.session_state["milestones"] = milestones
 
         
 
@@ -822,7 +824,7 @@ def page_task_creator(projektleiter: str, settings: dict):
         # Start/Ende spaltenweise einsetzen
         df_active[["Start", "Ende"]] = (
             df_active["Abteilung"]
-            .apply(lambda d: pd.Series(default_interval(d, MILESTONES)))
+            .apply(lambda d: pd.Series(default_interval(d, st.session_state["milestones"])))
         )
         task_names = st.session_state["cfg"]["task_names"]
         df_active["Aufgabe"] = df_active["Abteilung"].map(task_names)
@@ -876,7 +878,12 @@ def page_task_creator(projektleiter: str, settings: dict):
 
         # Gantt zeichnen
         # Meilensteine (bereits als date-Objekte geparst)
-        milestones = {"Ende Kick-Off": MILESTONES["G6"], "Ende Design": MILESTONES["G7"], "Ende Produktion" : MILESTONES["G8"]}
+        ms = st.session_state["milestones"]
+        milestones = {
+            "Ende Kick-Off":   ms["G6"],
+            "Ende Design":     ms["G7"],
+            "Ende Produktion": ms["G8"],
+        }
         fig = plot_gantt(edited, milestones)
         st.pyplot(fig, use_container_width=True)
 
@@ -964,8 +971,8 @@ def page_task_creator(projektleiter: str, settings: dict):
                         "MCAD",
                         "MCAD - Interne Freigabe",
                         0,
-                        MILESTONES["G7"].strftime("%d.%m.%Y"),
-                        MILESTONES["G7"].strftime("%d.%m.%Y"),
+                        ms["G7"].strftime("%d.%m.%Y"),
+                        ms["G7"].strftime("%d.%m.%Y"),
                     )
                       
                 if "ECAD" in edited["Abteilung"].values:
@@ -975,20 +982,20 @@ def page_task_creator(projektleiter: str, settings: dict):
                         row["Leistungsart"],   
                         "ECAD - Interne Freigabe",
                         0,
-                        MILESTONES["G7"].strftime("%d.%m.%Y"),
-                        MILESTONES["G7"].strftime("%d.%m.%Y"),
+                        ms["G7"].strftime("%d.%m.%Y"),
+                        ms["G7"].strftime("%d.%m.%Y"),
                     ) 
                              
             # Meilenstein DISPATCH anlegen
             create_dispatch_milestone(
                 project,
                 st.session_state["projektleiter"],
-                MILESTONES["G8"].strftime("%d.%m.%Y"),
-                MILESTONES["G8"].strftime("%d.%m.%Y")
+                ms["G8"].strftime("%d.%m.%Y"),
+                ms["G8"].strftime("%d.%m.%Y")
             )
             # Support-Aufgabe anlegen
 
-            start_date = MILESTONES["G8"]                     # datetime.date-Objekt
+            start_date = ms["G8"]                     # datetime.date-Objekt
             end_date   = start_date + timedelta(days=365)  # +1 Jahr
 
             create_project_task_for_department(
