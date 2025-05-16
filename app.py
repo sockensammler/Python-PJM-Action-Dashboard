@@ -125,10 +125,11 @@ def post_json(params: dict,
     -------
     dict | None
     """
-    if address is None:                      # <- erst **jetzt** auflösen
-        if base_address is None:
-            raise RuntimeError("base_address noch nicht initialisiert")
-        address = base_address
+    if address is None:
+        address = st.session_state.get("cfg", {}).get(
+            "base_address", "http://intra-erp:4444/EPLAN_WS_FREE_EDP"
+        )
+
     try:
         res = requests.post(address, json=params, timeout=timeout)
         res.raise_for_status()
@@ -427,9 +428,10 @@ def get_gateway_info(project_number: str) -> Optional[GatewayInfo]:
     }
 
     try:
-        r = requests.post(base_address, json=params, timeout=30)
-        r.raise_for_status()
-        r_json = r.json()
+        r_json = post_json(
+            params,
+            err_msg="Fehler beim Abruf der Gateway-Kopfdaten"
+        )
 
         if not r_json.get("success"):
             st.error(f"ABAS meldet Fehler: {r_json.get('message', 'kein Text')}")
@@ -529,7 +531,8 @@ def _resolve_anchor(anchor: str, milestones: dict[str, date]) -> date:
 
 def default_interval(dept: str, milestones: dict[str, date]) -> tuple[date, date]:
     """Berechnet Start- und Enddatum gemäss DATE_RULES."""
-    a_s, off_s, a_e, off_e = DATE_RULES[dept]
+    rules = st.session_state["cfg"]["date_rules"]
+    a_s, off_s, a_e, off_e = rules[dept]
     start = roll_to_business_day(
             _resolve_anchor(a_s, milestones) + timedelta(days=off_s),
             how="forward")
@@ -821,7 +824,9 @@ def page_task_creator(projektleiter: str, settings: dict):
             df_active["Abteilung"]
             .apply(lambda d: pd.Series(default_interval(d, MILESTONES)))
         )
-        df_active["Aufgabe"] = df_active["Abteilung"].map(TASK_NAMES)
+        task_names = st.session_state["cfg"]["task_names"]
+        df_active["Aufgabe"] = df_active["Abteilung"].map(task_names)
+
 
         # NEU: Leistungsart sofort hinterlegen …
         df_active["Leistungsart"] = df_active["Abteilung"].apply(map_leistungsart)
@@ -832,9 +837,6 @@ def page_task_creator(projektleiter: str, settings: dict):
         # ⇣ NEU: chronologisch sortieren
         df_active.sort_values("Start", inplace=True)
         df_active.reset_index(drop=True, inplace=True)   
-
-        # Aufgabentexte
-        df_active["Aufgabe"] = df_active["Abteilung"].map(TASK_NAMES)
 
         # Datumstyp für Streamlit
         df_active[["Start", "Ende"]] = df_active[["Start", "Ende"]].apply(pd.to_datetime)
@@ -985,16 +987,21 @@ def page_task_creator(projektleiter: str, settings: dict):
                 MILESTONES["G8"].strftime("%d.%m.%Y")
             )
             # Support-Aufgabe anlegen
+
+            start_date = MILESTONES["G8"]                     # datetime.date-Objekt
+            end_date   = start_date + timedelta(days=365)  # +1 Jahr
+
             create_project_task_for_department(
                 project,
                 "INTRAVIS",
-                "SONSTIGE",   
+                "SONSTIGE",
                 "Support",
                 0,
-                MILESTONES["G8"].strftime("%d.%m.%Y"),
-                MILESTONES["G8"].strftime("%d.%m.%Y")
+                start_date.strftime("%d.%m.%Y"),
+                end_date.strftime("%d.%m.%Y")
             )
-            # Release Tasks anlegen
+
+        
 
             st.success("Aufgaben erfolgreich angelegt.")
 
@@ -1075,13 +1082,17 @@ def main():
 
     # Einstellungen laden
     settings = load_settings()
-    global base_address               # ←  Zugriff auf die Modul-Variable
-    base_address = settings.get(
-        "base_address",
-        "http://intra-erp:4444/EPLAN_WS_FREE_EDP" 
+    if "cfg" not in st.session_state:          # einmal pro Session
+        st.session_state["cfg"] = {}
+
+    cfg = st.session_state["cfg"]
+    cfg["base_address"] = settings.get(
+        "base_address", "http://intra-erp:4444/EPLAN_WS_FREE_EDP"
     )
-    TASK_NAMES.update(settings["task_names"])
-    DATE_RULES.update({k: tuple(v) for k, v in settings["date_rules"].items()})
+    cfg["task_names"] = settings.get("task_names", TASK_NAMES).copy()
+    cfg["date_rules"] = {
+        k: tuple(v) for k, v in settings.get("date_rules", DATE_RULES).items()
+    }
 
 
     if page_choice == "PJM Overview":
