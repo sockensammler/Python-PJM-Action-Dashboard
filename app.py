@@ -54,6 +54,19 @@ TASK_NAMES = {
     "TD": "Manual",
     "AUTOMATION": "Automation",
 }
+
+LEISTUNGSARTEN: dict[str, str] = {
+    "BILDGEBUNG":        "BILDGEBUNG",
+    "MCAD":              "MCAD",
+    "ECAD":              "ECAD_ELEKTRONIK",
+    "PROJECTMANAGEMENT": "AUFTRAGSTEUERUNG",
+    "SOFTWARE":          "SOFTWARE",
+    "TD":                "TD",
+    "AUTOMATION":        "AUTOMATIS",
+    "IPC":               "SOFTWARE",
+    "TECHNIKUM":         "TECHNIKUM",
+    "INTRAVIS":        "SONSTIGE",
+}
 # -------
 DATE_RULES = {
     "BILDGEBUNG":          ("G6", 0,    "G6",  7),
@@ -116,6 +129,19 @@ def post_json(params: dict,
     except requests.exceptions.RequestException as e:
         st.error(f"{err_msg}: {e}")
         return None
+
+def map_leistungsart(key: str, *, default: str | None = None) -> str:
+    """
+    Gibt den gemappten Wert zurück; Keys werden
+    case-insensitive behandelt. Bei unbekannter
+    Leistungsart → default oder KeyError.
+    """
+    try:
+        return LEISTUNGSARTEN[key.upper()]
+    except KeyError:
+        if default is not None:
+            return default
+        raise ValueError(f"Unbekannte Leistungsart: {key!r}") from None
 
 def release_tasks_to_departments(project_number: str):
     params = {
@@ -205,8 +231,7 @@ def create_project_task_for_person(project_number, person_short, task_name, leia
     }
     return post_json(params, err_msg="Fehler beim Abrufen der Dispatch-Daten")
 
-def create_project_task_for_department(project_number, department_short, task_name, time_budget, date_start, date_end):
-    
+def create_project_task_for_department(project_number, department_short, leiart, task_name, time_budget, date_start, date_end):
     
     # JSON-Payload analog zum C# Beispiel
     params = {
@@ -215,7 +240,7 @@ def create_project_task_for_department(project_number, department_short, task_na
         "data": [
             {"name": "yprojekt", "value": project_number},
             {"name": "yprojteam", "value": department_short},
-            {"name": "yleiart", "value": department_short},
+            {"name": "yleiart", "value": leiart},
             {"name": "namebspr", "value": task_name},
             {"name": "ypvsollstd", "value": time_budget},
             {"name": "ypvplanstd", "value": time_budget},
@@ -238,7 +263,7 @@ def create_dispatch_milestone(project_number, person_short, date_start, date_end
             {"name": "yadatum", "value": date_start},
             {"name": "yedatum", "value": date_end },
             {"name": "ypvtyp", "value": "Meilenstein" },
-            {"name": "namebspr", "value": "Dispatch"}
+            {"name": "namebspr", "value": "MS Dispatch"}
         ],
     }
     return post_json(params, err_msg="Fehler beim Abrufen der Dispatch-Daten")
@@ -760,6 +785,10 @@ def page_task_creator(projektleiter: str, settings: dict):
             .apply(lambda d: pd.Series(default_interval(d, MILESTONES)))
         )
 
+        # ⇣ NEU: chronologisch sortieren
+        df_active.sort_values("Start", inplace=True)
+        df_active.reset_index(drop=True, inplace=True)   
+
         # Aufgabentexte
         df_active["Aufgabe"] = df_active["Abteilung"].map(TASK_NAMES)
 
@@ -809,7 +838,7 @@ def page_task_creator(projektleiter: str, settings: dict):
         # Button für die Erstellung der Aufgaben
         if st.button("Aufgaben anlegen"):
             # Aufgaben für alle Abteilungen anlegen
-            for _, row in edited.iterrows():
+            for _, row in edited.sort_values("Start").iterrows():
 
                 if row["Abteilung"] == "PROJECTMANAGEMENT":
                     # Aufgabe für Projektleiter anlegen
@@ -827,6 +856,7 @@ def page_task_creator(projektleiter: str, settings: dict):
                     create_project_task_for_department(
                         project,
                         row["Abteilung"],
+                        map_leistungsart(row["Abteilung"]),
                         row["Aufgabe"],
                         row["Stunden"],
                         row["Start"].strftime("%d.%m.%Y"),
@@ -839,6 +869,7 @@ def page_task_creator(projektleiter: str, settings: dict):
                         create_project_task_for_department(
                             project,
                             row["Abteilung"],
+                            "BILDGEBUNG",
                             "Bildgebung - MCAD/ECAD Unterstützung",
                             row["Stunden"],
                             imaging_support_start .strftime("%d.%m.%Y"),
@@ -861,6 +892,7 @@ def page_task_creator(projektleiter: str, settings: dict):
                     create_project_task_for_department(
                         project,
                         row["Abteilung"],
+                        map_leistungsart(row["Abteilung"]),
                         row["Aufgabe"],
                         row["Stunden"],
                         row["Start"].strftime("%d.%m.%Y"),
@@ -873,6 +905,7 @@ def page_task_creator(projektleiter: str, settings: dict):
                     create_project_task_for_department(
                         project,
                         "MCAD",
+                        "MCAD",
                         "MCAD - Interne Freigabe",
                         0,
                         MILESTONES["G7"].strftime("%d.%m.%Y"),
@@ -883,6 +916,8 @@ def page_task_creator(projektleiter: str, settings: dict):
                     create_project_task_for_department(
                         project,
                         "ECAD",
+                        "ECAD",
+                        map_leistungsart(row["Abteilung"]),
                         "ECAD - Interne Freigabe",
                         0,
                         MILESTONES["G7"].strftime("%d.%m.%Y"),
@@ -900,6 +935,7 @@ def page_task_creator(projektleiter: str, settings: dict):
             create_project_task_for_department(
                 project,
                 "INTRAVIS",
+                map_leistungsart("INTRAVIS"),
                 "Support",
                 0,
                 MILESTONES["G8"].strftime("%d.%m.%Y"),
