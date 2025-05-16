@@ -17,8 +17,8 @@
 
   "date_rules": {
     "BILDGEBUNG":          ["G6",   0,  "G6",  7],
-    "MCAD":                ["G7", -14,  "G7", -7],
-    "ECAD":                ["G7", -14,  "G7", -7],
+    "MCAD":                ["G6", 1,  "G6", 8],
+    "ECAD":                ["G6", 1,  "G6", 8],
     "PROJECTMANAGEMENT":   ["TODAY",-5, "G8",  0],
     "PRODUCT DEVELOPMENT": ["G6",   0,  "G7",  0],
     "SOFTWARE":            ["G7",   1,  "G7", 14],

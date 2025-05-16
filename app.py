@@ -77,8 +77,8 @@ LEISTUNGSARTEN: dict[str, str] = {
 # -------
 DATE_RULES = {
     "BILDGEBUNG":          ("G6", 0,    "G6",  7),
-    "MCAD":                ("G7", -14,  "G7", -7),
-    "ECAD":                ("G7", -14,  "G7", -7),
+    "MCAD":                ("G6", 1,  "G6", 8),
+    "ECAD":                ("G6", 1,  "G6", 8),
     "PROJECTMANAGEMENT":   ("TODAY", -5, "G8",  0),
     "PRODUCT DEVELOPMENT": ("G6", 0,    "G7",  0),  # Ende Engineering = G7
     "SOFTWARE":            ("G7", 1,    "G7", 14),
@@ -797,9 +797,11 @@ def page_task_creator(projektleiter: str, settings: dict):
         # Rename the columns
         df_hours.columns = ['Abteilung', 'Stunden']
         # Sort the DataFrame by the 'Abteilung' column
-        df_hours.sort_values(by='Abteilung', inplace=True)
-        # Display the DataFrame
+        #df_hours = df_hours[df_hours["Abteilung"] != "PRODUCT DEVELOPMENT"]
+
+        df_hours.sort_values("Abteilung", inplace=True)
         st.dataframe(df_hours, use_container_width=True, hide_index=True)
+        
         prod_hours = df_hours.loc[df_hours["Abteilung"] == "PRODUCT DEVELOPMENT", "Stunden"]
 
         if not prod_hours.empty and prod_hours.iloc[0] > 0:
@@ -816,12 +818,15 @@ def page_task_creator(projektleiter: str, settings: dict):
 
         # nur Abteilungen mit gebuchten Stunden
         # Abteilungen >0 h
+        # 1) nur Abteilungen mit gebuchten Stunden
         df_active = df_hours[df_hours["Stunden"] > 0].copy()
 
-        # << Wichtig >>
-        df_active.reset_index(drop=True, inplace=True)   # lückenlosen Index erzwingen
+        # 2) PRODUCT DEVELOPMENT für den Projektplan streichen
+        df_active = df_active[df_active["Abteilung"] != "PRODUCT DEVELOPMENT"].copy()
 
-        # Start/Ende spaltenweise einsetzen
+        # ab hier wie gehabt: Start/Ende einsetzen, Spalten abbilden, Editor usw.
+        df_active.reset_index(drop=True, inplace=True)
+
         df_active[["Start", "Ende"]] = (
             df_active["Abteilung"]
             .apply(lambda d: pd.Series(default_interval(d, st.session_state["milestones"])))
@@ -829,18 +834,11 @@ def page_task_creator(projektleiter: str, settings: dict):
         task_names = st.session_state["cfg"]["task_names"]
         df_active["Aufgabe"] = df_active["Abteilung"].map(task_names)
 
-
-        # NEU: Leistungsart sofort hinterlegen …
         df_active["Leistungsart"] = df_active["Abteilung"].apply(map_leistungsart)
-
-        # … und die Spalte für die GUI ausblenden
         df_view = df_active.drop(columns=["Leistungsart"])
 
-        # ⇣ NEU: chronologisch sortieren
         df_active.sort_values("Start", inplace=True)
-        df_active.reset_index(drop=True, inplace=True)   
-
-        # Datumstyp für Streamlit
+        df_active.reset_index(drop=True, inplace=True)
         df_active[["Start", "Ende"]] = df_active[["Start", "Ende"]].apply(pd.to_datetime)
 
 
