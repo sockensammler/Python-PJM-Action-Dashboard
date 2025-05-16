@@ -10,6 +10,13 @@ import matplotlib.dates as mdates
 from pathlib import Path
 import json
 from copy import deepcopy
+from dataclasses import dataclass
+
+@dataclass
+class GatewayInfo:
+    calculation_number: int
+    gateway_id: str
+    gateway_number: int
 
 base_address: str | None = None     # noch kein Wert
 SETTINGS_PATH = Path(__file__).parent / "settings.json"
@@ -401,10 +408,8 @@ def fetch_overbooked_projects(projektleiter_kuerzel):
         "table_fields": ["ytprojekt^nummer","ytprojname^namebspr","ytfortistbudget","ytsollstd","ytiststd"]
     }
     return post_json(params, err_msg="Fehler beim Abrufen der Dispatch-Daten")
-    
-def get_gateway_id_and_calculation_number(
-    project_number: str,
-) -> Optional[Tuple[str, str, str]]:
+
+def get_gateway_info(project_number: str) -> Optional[GatewayInfo]:
     """
     Liefert (calc_no, gateway_id, gateway_no).
     Gibt None zurück, wenn etwas fehlt oder ein Fehler auftritt.
@@ -449,7 +454,7 @@ def get_gateway_id_and_calculation_number(
             )
             return None
 
-        return calc_no, row.get("id", ""), row.get("nummer", "")
+        return GatewayInfo(calc_no, row.get("id", ""), row.get("nummer", ""))
 
     except requests.exceptions.RequestException as e:
         st.error(f"HTTP-Fehler beim Abruf der Gateway-Kopfdaten: {e}")
@@ -745,7 +750,18 @@ def page_task_creator(projektleiter: str, settings: dict):
     project = st.text_input("Projekt‑Nr.")
     if project:
         # Get the gateway number, gateway ID and calculation number from the project number 
-        calculation_number, gateway_id, gateway_number = get_gateway_id_and_calculation_number(project)
+        # Gateway-Infos holen (+ Guard)
+        gw_info = get_gateway_info(project)
+        if gw_info is None:          # None ⇒ Fehler schon in Funktion gemeldet
+             st.warning(
+                 "Für dieses Projekt konnten keine Gateway-Informationen "
+                 "ermittelt werden. Bitte Projekt-Nr. prüfen oder Daten nachtragen."
+             )
+             st.stop()                # bricht den Streamlit-Run sauber ab
+ 
+        calculation_number = gw_info.calculation_number
+        gateway_id         = gw_info.gateway_id
+        gateway_number     = gw_info.gateway_number
         gateway_data = fetch_gateway_data(gateway_id)
         global MILESTONES
         end_dates, MILESTONES = get_phase_end_dates(gateway_data)
@@ -857,13 +873,14 @@ def page_task_creator(projektleiter: str, settings: dict):
 
 
         # Hinweise zu zusätzlichen Aufgaben
+        st.info("Es wird noch automatisch eine zusätzliche Support-Aufgabe angelegt.") 
         if settings["doppelte_bildgebungsaufgabe"] == True and "BILDGEBUNG" in edited["Abteilung"].values:
             st.info("Es wird noch automatisch eine zusätzliche Aufgabe für die Bildgebungsünterstützung in der MCAD angelegt.")
         if settings["mcad_ecad_freigabeaufgabe"] == True and "MCAD" in edited["Abteilung"].values:
             st.info("Es wird noch automatisch eine zusätzliche MCAD - Freigabe Aufgabe angelegt.")
         if settings["mcad_ecad_freigabeaufgabe"] == True and "ECAD" in edited["Abteilung"].values:
             st.info("Es wird noch automatisch eine zusätzliche ECAD - Freigabe Aufgabe angelegt.")  
-
+        
 
 
 
