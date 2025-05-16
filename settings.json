@@ -1,13 +1,13 @@
 {
   "doppelte_bildgebungsaufgabe": true,
   "mcad_ecad_freigabeaufgabe": true,
-  "base_adress" : "http://intra-erp:4444/EPLAN_WS_FREE_EDP",
+  "base_address" : "http://intra-erp:4444/EPLAN_WS_FREE_EDP",
 
   
   "task_names": {
     "BILDGEBUNG": "Imaging Design",
-    "MCAD": "Konstruktionsphase (inklusive Kundenlayout)",
-    "ECAD": "ECAD Konstruktionsphase",
+    "MCAD": "MCAD - Konstruktionsphase (inklusive Kundenlayout)",
+    "ECAD": "ECAD - Konstruktionsphase",
     "PROJECTMANAGEMENT": "Project Planning",
     "PRODUCT DEVELOPMENT": "Special Development",
     "SOFTWARE": "Software Installation",

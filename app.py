@@ -210,7 +210,7 @@ def create_project_task_folder(project_number, task_name, date_start, date_end):
     return post_json(params, err_msg="Fehler beim Abrufen der Dispatch-Daten")
 
 #create a task for a specific person in ABAS ERP
-def create_project_task_for_person(project_number, person_short, task_name, leiart, time_budget, date_start, date_end):
+def create_project_task_for_person(project_number, person_short, leiart, task_name, time_budget, date_start, date_end):
     
     
     # JSON-Payload analog zum C# Beispiel
@@ -784,6 +784,7 @@ def page_task_creator(projektleiter: str, settings: dict):
             df_active["Abteilung"]
             .apply(lambda d: pd.Series(default_interval(d, MILESTONES)))
         )
+        df_active["Aufgabe"] = df_active["Abteilung"].map(TASK_NAMES)
 
         # NEU: Leistungsart sofort hinterlegen …
         df_active["Leistungsart"] = df_active["Abteilung"].apply(map_leistungsart)
@@ -856,8 +857,8 @@ def page_task_creator(projektleiter: str, settings: dict):
                     create_project_task_for_person(
                         project,
                         st.session_state["projektleiter"],
+                        row["Leistungsart"],
                         row["Aufgabe"],
-                        "AUFTRAGSTEUERUNG",
                         row["Stunden"],
                         row["Start"].strftime("%d.%m.%Y"),
                         row["Ende"].strftime("%d.%m.%Y"),
@@ -892,8 +893,8 @@ def page_task_creator(projektleiter: str, settings: dict):
                     create_project_task_for_person(
                         project,
                         "RH",
+                        row["Leistungsart"],
                         row["Aufgabe"],
-                        "SOFTWARE",
                         row["Stunden"],
                         row["Start"].strftime("%d.%m.%Y"),
                         row["Ende"].strftime("%d.%m.%Y"),
@@ -945,7 +946,7 @@ def page_task_creator(projektleiter: str, settings: dict):
             create_project_task_for_department(
                 project,
                 "INTRAVIS",
-                row["Leistungsart"],   
+                "SONSTIGE",   
                 "Support",
                 0,
                 MILESTONES["G8"].strftime("%d.%m.%Y"),
