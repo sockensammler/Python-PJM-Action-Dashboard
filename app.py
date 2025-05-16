@@ -872,6 +872,12 @@ def page_task_creator(projektleiter: str, settings: dict):
         edited["Leistungsart"] = edited["Abteilung"].apply(map_leistungsart)
 
 
+        # Gantt zeichnen
+        # Meilensteine (bereits als date-Objekte geparst)
+        milestones = {"Ende Kick-Off": MILESTONES["G6"], "Ende Design": MILESTONES["G7"], "Ende Produktion" : MILESTONES["G8"]}
+        fig = plot_gantt(edited, milestones)
+        st.pyplot(fig, use_container_width=True)
+
         # Hinweise zu zusätzlichen Aufgaben
         st.info("Es wird noch automatisch eine zusätzliche Support-Aufgabe angelegt.") 
         if settings["doppelte_bildgebungsaufgabe"] == True and "BILDGEBUNG" in edited["Abteilung"].values:
@@ -882,13 +888,6 @@ def page_task_creator(projektleiter: str, settings: dict):
             st.info("Es wird noch automatisch eine zusätzliche ECAD - Freigabe Aufgabe angelegt.")  
         
 
-
-
-        # Gantt zeichnen
-        # Meilensteine (bereits als date-Objekte geparst)
-        milestones = {"Ende Kick-Off": MILESTONES["G6"], "Ende Design": MILESTONES["G7"], "Ende Produktion" : MILESTONES["G8"]}
-        fig = plot_gantt(edited, milestones)
-        st.pyplot(fig, use_container_width=True)
 
         # Button für die Erstellung der Aufgaben
         if st.button("Aufgaben anlegen"):
