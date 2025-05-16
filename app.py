@@ -6,13 +6,12 @@ import streamlit as st
 from typing import Dict, Tuple, Optional
 import streamlit.column_config as cc 
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 from pathlib import Path
 import json
 from copy import deepcopy
 
-
-base_address = "http://intra-erp:4444/EPLAN_WS_FREE_EDP"
-
+base_address: str | None = None     # noch kein Wert
 SETTINGS_PATH = Path(__file__).parent / "settings.json"
 
 # Aktuelles Datum und in 10 Arbeitstagen & 3 Tage zurück
@@ -71,6 +70,7 @@ DATE_RULES = {
 DEFAULT_SETTINGS = {
     "doppelte_bildgebungsaufgabe": True,
     "mcad_ecad_freigabeaufgabe": True,
+    "base_address": "http://intra-erp:4444/EPLAN_WS_FREE_EDP",
     "task_names": TASK_NAMES.copy(),     # aus der alten Konstante
     "date_rules": {k: list(v) for k, v in DATE_RULES.items()},
 }
@@ -87,7 +87,7 @@ DEFAULT_SETTINGS = {
 def post_json(params: dict,
               *,
               err_msg: str = "Fehler beim Abrufen der Daten",
-              address: str = base_address,
+              address: str | None = None,
               timeout: int = 30):
     """
     Sendet einen POST-Request an `address` und gibt bei Erfolg die JSON-Antwort
@@ -105,6 +105,10 @@ def post_json(params: dict,
     -------
     dict | None
     """
+    if address is None:                      # <- erst **jetzt** auflösen
+        if base_address is None:
+            raise RuntimeError("base_address noch nicht initialisiert")
+        address = base_address
     try:
         res = requests.post(address, json=params, timeout=timeout)
         res.raise_for_status()
@@ -485,10 +489,10 @@ def default_interval(dept: str, milestones: dict[str, date]) -> tuple[date, date
 
 def plot_gantt(df_active: pd.DataFrame, milestones: dict[str, date]):
     """
-    Erstellt ein Gantt-Diagramm mit
-      • einer Task-Zeile pro Abteilung
-      • Kalenderwochen-Gitternetz
-      • Meilenstein-Linien G6–G8
+    Gantt-Diagramm
+      • eine Task-Zeile pro Abteilung
+      • X-Achse nur Kalenderwochen (KW##)
+      • Meilensteine mit Datumsangabe
     Gibt eine matplotlib-Figure zurück.
     """
     df = df_active.copy()
@@ -496,30 +500,43 @@ def plot_gantt(df_active: pd.DataFrame, milestones: dict[str, date]):
     df["Ende"]  = pd.to_datetime(df["Ende"])
     df = df.sort_values("Start")
 
-    # Achsen-Setup
     fig, ax = plt.subplots(figsize=(10, 0.6 * len(df) + 2))
     y_pos = range(len(df))
 
-    # Tasks als horizontale Balken
+    # ------------------ Tasks ------------------
     for i, (_, r) in enumerate(df.iterrows()):
-        ax.barh(i, (r["Ende"] - r["Start"]).days, left=r["Start"])
+        ax.barh(i,
+                (r["Ende"] - r["Start"]).days,
+                left=r["Start"],
+                height=0.6)
         ax.text(r["Start"], i, f' {r["Abteilung"]}', va="center")
 
-    # Meilensteine (gestrichelte Linien)
+    # ------------------ Meilensteine ------------------
     for label, when in milestones.items():
-        ax.axvline(when, linestyle="--")
-        ax.text(when, len(df) + 0.2, label, rotation=90, va="bottom")
+        ax.axvline(when, linestyle="--", color="tab:red")
+        ax.text(when, len(df)+0.2,
+                f'{label}\n{when.strftime("%d.%m.%Y")}',
+                rotation=90, va="bottom", ha="center", color="tab:red")
 
-    # Kalenderwochen-Gitternetz & Beschriftung
-    start, end = df["Start"].min().normalize(), df["Ende"].max().normalize()
-    for w in pd.date_range(start, end, freq="W-MON"):
-        ax.axvline(w, alpha=0.2, linewidth=0.5)
-        ax.text(w, -1, f'KW{w.isocalendar().week}', rotation=90,
-                va="top", fontsize=12)
+    # ------------------ Kalenderwochen-Gitternetz & Labels ------------------
+    start_kw = df["Start"].min().normalize()
+    end_kw   = df["Ende"].max().normalize()
 
+    kw_mondays = pd.date_range(start_kw, end_kw, freq="W-MON")
+
+    # dünne vertikale Linien je KW
+    for w in kw_mondays:
+        ax.axvline(w, alpha=0.2, linewidth=0.5, zorder=0)
+
+    # Achsenticks nur an KW-Montagen
+    ax.set_xticks(kw_mondays)
+    ax.set_xticklabels([f'KW{w.isocalendar().week:02d}' for w in kw_mondays],
+                       rotation=90, ha="center")
+
+    # ------------------ Achsen-Finish ------------------
+    ax.set_xlabel("Kalenderwoche")
     ax.set_yticks([])
     ax.set_ylim(-1, len(df) + 1)
-    ax.set_xlabel("Datum")
     fig.tight_layout()
     return fig
 
@@ -772,6 +789,17 @@ def page_task_creator(projektleiter: str, settings: dict):
             key="task_editor",
         )
 
+        # Hinweise zu zusätzlichen Aufgaben
+        if settings["doppelte_bildgebungsaufgabe"] == True and "BILDGEBUNG" in edited["Abteilung"].values:
+            st.info("Es wird noch automatisch eine zusätzliche Aufgabe für die Bildgebungsünterstützung in der MCAD angelegt.")
+        if settings["mcad_ecad_freigabeaufgabe"] == True and "MCAD" in edited["Abteilung"].values:
+            st.info("Es wird noch automatisch eine zusätzliche MCAD - Freigabe Aufgabe angelegt.")
+        if settings["mcad_ecad_freigabeaufgabe"] == True and "ECAD" in edited["Abteilung"].values:
+            st.info("Es wird noch automatisch eine zusätzliche ECAD - Freigabe Aufgabe angelegt.")  
+
+
+
+
         # Gantt zeichnen
         # Meilensteine (bereits als date-Objekte geparst)
         milestones = {"Ende Kick-Off": MILESTONES["G6"], "Ende Design": MILESTONES["G7"], "Ende Produktion" : MILESTONES["G8"]}
@@ -816,6 +844,7 @@ def page_task_creator(projektleiter: str, settings: dict):
                             imaging_support_start .strftime("%d.%m.%Y"),
                             imaging_support_end.strftime("%d.%m.%Y"),
                         )
+                        
                 elif row["Abteilung"] == "IPC":
                     # Hauptbildgebungsaufgabe anlegen
                     create_project_task_for_person(
@@ -848,7 +877,8 @@ def page_task_creator(projektleiter: str, settings: dict):
                         0,
                         MILESTONES["G7"].strftime("%d.%m.%Y"),
                         MILESTONES["G7"].strftime("%d.%m.%Y"),
-                    )      
+                    )
+                      
                 if "ECAD" in edited["Abteilung"].values:
                     create_project_task_for_department(
                         project,
@@ -857,7 +887,8 @@ def page_task_creator(projektleiter: str, settings: dict):
                         0,
                         MILESTONES["G7"].strftime("%d.%m.%Y"),
                         MILESTONES["G7"].strftime("%d.%m.%Y"),
-                    )        
+                    ) 
+                             
             # Meilenstein DISPATCH anlegen
             create_dispatch_milestone(
                 project,
@@ -955,6 +986,11 @@ def main():
 
     # Einstellungen laden
     settings = load_settings()
+    global base_address               # ←  Zugriff auf die Modul-Variable
+    base_address = settings.get(
+        "base_address",
+        "http://intra-erp:4444/EPLAN_WS_FREE_EDP" 
+    )
     TASK_NAMES.update(settings["task_names"])
     DATE_RULES.update({k: tuple(v) for k, v in settings["date_rules"].items()})
 
